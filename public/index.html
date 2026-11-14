@@ -177,7 +177,7 @@ function showSetup() {
 pveum user add appstore@pve
 pveum acl modify / -user appstore@pve -role AppStore
 pveum user token add appstore@pve web --privsep 0</pre>
-    <div class="field"><label>Proxmox host</label><input name="host" value="192.168.1.115" required></div>
+    <div class="field"><label>Proxmox host</label><input name="host" placeholder="IP address of your Proxmox host" required></div>
     <div class="field"><label>Token ID</label><input name="tokenId" value="appstore@pve!web" required autocomplete="off"></div>
     <div class="field"><label>Token secret (the "value" printed by the last command)</label><input name="secret" ${state.dev ? '' : 'required'} autocomplete="off" autofocus></div>
     <div class="field"><label>Choose a password for this App Store</label><input name="password" type="password" minlength="8" required autocomplete="new-password"></div>
