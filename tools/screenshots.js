@@ -31,7 +31,7 @@ const REPOS = {
 };
 const NOT_A_SCREENSHOT = /shields\.io|badge|\.svg(\?|#|$)|logo|icon|sponsor|opencollective|avatar|contributors|contrib\.rocks|star-history|starchart|deploy|button|codecov|crowdin|weblate|paypal|donat|buymeacoffee|ko-fi|liberapay|patreon|discord|twitter|license|repobeats|trendshift|producthunt|gitpod|vercel|netlify|digitalocean|jetbrains|browserstack|hosted|powered|partner|backer|supporter|flag|qr-?code|wechat|alipay|banner|header|hero|mascot/i;
 
-const get = (url, ms = 20000) => fetch(url, { signal: AbortSignal.timeout(ms), headers: { 'User-Agent': 'catalog-screenshot-check' } });
+const get = (url, ms = 20000) => fetch(url, { signal: AbortSignal.timeout(ms), headers: { 'User-Agent': 'Mozilla/5.0 (compatible; proxmox-appstore catalog screenshot check)' } });
 
 function size(buf, type) { // [width, height] or null
   try {
@@ -116,7 +116,29 @@ function fromGalleries(app) {
 const EXTRA = {
   sabnzbd: ['interface', 'history-details', 'file-lists'].map(n => `https://sabnzbd.org/images/landing/screenshots/${n}.png`),
   pgadmin: ['dashboard', 'viewdata', 'properties', 'activity'].map(n => `https://www.pgadmin.org/static/COMPILED/assets/img/screenshots/pgadmin4-${n}.png`),
+  maintainerr: ['Collections', 'Rules', 'Ruleconfig', 'Calendar'].map(n => `https://raw.githubusercontent.com/Maintainerr/maintainerr_site/main/src/assets/screenshots/${n}.png`),
+  backrest: ['dashboard', 'browse-snapshot', 'add-plan'].map(n => `https://f000.backblazeb2.com/file/gshare/screenshots/backrest-1.11.1-${n}.png`),
+  urbackup: ['status_full', 'activities_full', 'lastmodified'].map(n => `https://www.urbackup.org/screenshots/${n}.png`),
+  organizr: ['53615855-35cc5a80-3b9d-11e9-882b-f09f3eb18173', '53615857-35cc5a80-3b9d-11e9-82bf-91987c529e72', '53615858-35cc5a80-3b9d-11e9-8149-01a7fcd9160a'].map(n => `https://user-images.githubusercontent.com/16184466/${n}.png`),
+  mafl: ['cover', 'themes'].map(n => `https://raw.githubusercontent.com/hywax/mafl/main/docs/public/${n}.png`),
+  traggo: ['dashboard', 'list', 'calendar'].map(n => `https://raw.githubusercontent.com/traggo/server/HEAD/.github/traggo_${n}.png`),
+  shiori: ['02-home', '03-home-list', '06-dark-home', '04-options'].map(n => `https://raw.githubusercontent.com/go-shiori/shiori/master/docs/assets/screenshots/${n}.png`),
+  phpmyadmin: ['structure', 'designer', 'monitor', 'users'].map(n => `https://raw.githubusercontent.com/phpmyadmin/website/master/pmaweb/static/images/screenshots/${n}.png`),
+  iobroker: ['admin-2_ioBroker_Adapter_Admin_001a', 'admin-2_ioBroker_Admin_Adapter_Inhalt01', 'admin-2_ioBroker_Admin_Instanzen_Cronjob'].map(n => `https://raw.githubusercontent.com/ioBroker/ioBroker.admin/master/docs/de/admin/img/${n}.jpg`),
+  emqx: ['https://docs.emqx.com/assets/dashboard_preview.B9d7mlpP.png'],
+  caddy: ['https://caddyserver.com/resources/images/file-browser/browse-gallery-light.png'],
+  domoticz: [2, 3, 5, 8].map(n => `https://www.domoticz.com/images/slider-img${n}.jpg`),
+  grav: ['https://raw.githubusercontent.com/getgrav/grav-plugin-admin/develop/assets/admin-dashboard.png'],
+  factorio: [8, 1, 2, 3].map(n => `https://www.factorio.com/static/img/screenshots/screenshot-${n}.jpg`),
+  sftpgo: ['webadmin', 'webclient'].map(n => `https://sftpgo.com/assets/img/${n}.png`),
+  pigallery2: ['https://bpatrik.github.io/pigallery2/assets/demo.gif'],
+  // Wikipedia / Wikimedia Commons files
+  jenkins: [wiki('Updated-jenkins-view.png')],
+  couchdb: [wiki('Apache CouchDB v2.1.1 Fauxton Console.png')],
+  dokuwiki: [wiki('DokuWiki release 2020-07-29.png')],
+  luanti: ['Luanti-5.12-voxelibre-world.png', 'Minetest-5.3.0-home-decor-mod.jpg', 'Minetest-5.5.0-join-game-screen.png'].map(wiki),
 };
+function wiki(file) { return 'https://en.wikipedia.org/wiki/Special:FilePath/' + encodeURIComponent(file.replace(/ /g, '_')); }
 // 2. The project's own website, for apps that are in neither gallery.
 const WEBSITES = {
   kanboard: 'https://kanboard.org/', silverbullet: 'https://silverbullet.md/', dokuwiki: 'https://www.dokuwiki.org/dokuwiki', radicale: 'https://radicale.org/v3.html',

@@ -113,6 +113,18 @@ details.adv[open] summary{margin-bottom:6px}
 pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:0 0 12px}
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:9px 16px;border-radius:9px;font-weight:600;z-index:30;max-width:90vw}
 @media (max-width:560px){.bar{gap:10px}.logo span{display:none}.grid{grid-template-columns:1fr}}
+#releases{max-width:760px}
+.rel{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:16px 18px;margin-bottom:12px}
+.relhead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.relhead h2{margin:0;font-size:16px}
+.relhead .sub{margin-left:auto}
+.tag.latest{background:var(--accent);color:var(--accent-text);font-weight:600}
+.rel ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.rel li{display:grid;grid-template-columns:78px 1fr;gap:10px;align-items:baseline}
+.kind{font-size:11.5px;font-weight:700;text-align:center;border-radius:5px;padding:2px 0;background:var(--panel2);color:var(--muted)}
+.kind.new{color:var(--ok)}
+.kind.fixed{color:var(--warn)}
+@media (max-width:560px){nav button{padding:0 8px}}
 </style>
 </head>
 <body>
@@ -122,6 +134,7 @@ pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;ove
     <button data-tab="overview" class="on">My apps</button>
     <button data-tab="store">Store</button>
     <button data-tab="activity">Activity<span class="badge hidden" id="jobBadge"></span></button>
+    <button data-tab="changelog">Changelog</button>
   </nav>
   <div class="spacer"></div>
   <button class="btn sm" id="logout">Sign out</button>
@@ -144,6 +157,7 @@ pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;ove
     <div class="grid" id="apps"></div>
   </section>
   <section id="activity" class="hidden"><div id="jobs"></div></section>
+  <section id="changelog" class="hidden"><div id="releases"></div></section>
 </main>
 <div id="modal"></div>
 <div id="toast" class="hidden" role="status"></div>
@@ -418,11 +432,26 @@ async function pollJobs() {
 }
 
 // ---------- shell ----------
+// ---------- changelog ----------
+let releases = null;
+async function renderChangelog() {
+  if (!releases) {
+    $('#releases').innerHTML = '<div class="empty">Loading…</div>';
+    try { releases = await api('changelog'); } catch (e) { $('#releases').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  }
+  const label = { new: 'New', improved: 'Improved', fixed: 'Fixed' };
+  const day = d => { const t = new Date(d + 'T00:00:00'); return isNaN(t) ? d : t.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); };
+  $('#releases').innerHTML = releases.map((r, i) => `<article class="rel">
+    <div class="relhead"><h2>Version ${esc(r.version)}</h2>${i ? '' : '<span class="tag latest">Latest</span>'}<span class="sub">${esc(day(r.date))}</span></div>
+    <ul>${(r.changes || []).map(c => `<li><span class="kind ${esc(c.type)}">${esc(label[c.type] || c.type)}</span><span>${esc(c.text)}</span></li>`).join('')}</ul>
+  </article>`).join('') || '<div class="empty">No changes recorded yet.</div>';
+}
+
 function show(t) {
   tab = t;
-  for (const s of ['overview', 'store', 'activity']) $('#' + s).classList.toggle('hidden', s !== t);
+  for (const s of ['overview', 'store', 'activity', 'changelog']) $('#' + s).classList.toggle('hidden', s !== t);
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  ({ overview: renderOverview, store: renderStore, activity: renderJobs })[t]();
+  ({ overview: renderOverview, store: renderStore, activity: renderJobs, changelog: renderChangelog })[t]();
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
 $('#logout').onclick = async () => { await api('logout', {}); location.reload(); };

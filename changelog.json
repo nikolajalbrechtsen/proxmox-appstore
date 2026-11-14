@@ -1,0 +1,55 @@
+[
+  {
+    "version": "1.5",
+    "date": "2026-11-15",
+    "changes": [
+      { "type": "new", "text": "Changelog page: see what changed in each version, right in the app." },
+      { "type": "improved", "text": "Screenshots for 19 more apps. 182 of the 199 apps now have them; most of the rest are servers without a web page." }
+    ]
+  },
+  {
+    "version": "1.4",
+    "date": "2026-11-15",
+    "changes": [
+      { "type": "new", "text": "100 more apps in the store, 199 in total. Among them Pi-hole, Home Assistant, Jenkins, JupyterLab, Deluge, Duplicati, Guacamole, MySQL and MongoDB." },
+      { "type": "new", "text": "New category: Communication, with Element, Mumble and TeamSpeak." },
+      { "type": "improved", "text": "Screenshots for 39 more of the original apps." }
+    ]
+  },
+  {
+    "version": "1.3",
+    "date": "2026-11-15",
+    "changes": [
+      { "type": "new", "text": "App details: click an app in the store to see a description, screenshots, the Docker image, its web port and a link to the source." },
+      { "type": "new", "text": "Advanced install options: choose the image version, container ID, storage, network bridge, a static IP address, swap, extra environment variables, and whether the app starts at boot." }
+    ]
+  },
+  {
+    "version": "1.2",
+    "date": "2026-11-14",
+    "changes": [
+      { "type": "new", "text": "Automatic updates: the App Store checks GitHub every minute and updates itself. A broken update is skipped and the working version keeps running." },
+      { "type": "improved", "text": "My apps now shows apps and virtual machines in separate sections." },
+      { "type": "new", "text": "Step-by-step install guide in the README." }
+    ]
+  },
+  {
+    "version": "1.1",
+    "date": "2026-11-14",
+    "changes": [
+      { "type": "new", "text": "74 more apps in the store, 99 in total, including databases and a Minecraft server." },
+      { "type": "new", "text": "Apps that need a password or secret key get a random one filled in when you install them." },
+      { "type": "improved", "text": "Apps without a web page show their IP address after installing instead of an Open button." }
+    ]
+  },
+  {
+    "version": "1.0",
+    "date": "2026-11-14",
+    "changes": [
+      { "type": "new", "text": "My apps: overview of all containers and virtual machines with status, CPU, memory and IP address, and buttons to start, stop, restart and delete." },
+      { "type": "new", "text": "Store: one-click install of 25 apps from Docker images, plus any custom image." },
+      { "type": "new", "text": "Activity: live progress for every install." },
+      { "type": "new", "text": "First-run setup that connects to Proxmox with a limited API token." }
+    ]
+  }
+]

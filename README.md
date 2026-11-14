@@ -153,6 +153,18 @@ Add an entry to `catalog.json`:
 
 Restart the app afterwards (`systemctl restart appstore`).
 
+## Changelog
+
+The **Changelog** tab in the app lists what changed in each version. It reads `changelog.json`. When you change the app, add an entry at the top:
+
+```json
+{ "version": "1.6", "date": "2026-11-20", "changes": [
+  { "type": "new", "text": "What was added." },
+  { "type": "improved", "text": "What got better." },
+  { "type": "fixed", "text": "What was broken and now works." }
+] }
+```
+
 ## Troubleshooting
 
 - **The page doesn't load:** check the app in the container with `systemctl status appstore` and `journalctl -u appstore -n 30`.

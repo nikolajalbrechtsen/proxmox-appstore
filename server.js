@@ -316,6 +316,7 @@ async function api(req, res, url) {
   if (p === '/api/guests' && M === 'GET') return send(res, 200, await listGuests());
   if (p === '/api/catalog' && M === 'GET') return send(res, 200, catalog);
   if (p === '/api/jobs' && M === 'GET') return send(res, 200, jobs);
+  if (p === '/api/changelog' && M === 'GET') return send(res, 200, readJson(path.join(__dirname, 'changelog.json'), []));
   if (p === '/api/options' && M === 'GET') {
     // Choices for the advanced install form.
     const [st, br, nextid] = await Promise.all([
