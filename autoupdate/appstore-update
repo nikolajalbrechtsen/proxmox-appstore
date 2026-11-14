@@ -1,0 +1,24 @@
+#!/bin/sh
+# Runs on the appstore container every minute (see appstore-update.timer).
+# Pulls the app from GitHub and restarts it when there is a new commit on main.
+set -e
+cd /opt/appstore
+export GIT_SSH_COMMAND="ssh -i /root/.ssh/appstore_deploy -o IdentitiesOnly=yes"
+git fetch -q origin main
+NEW=$(git rev-parse origin/main)
+OLD=$(git rev-parse -q --verify HEAD || true)
+[ "$NEW" = "$OLD" ] && exit 0
+
+git reset -q --hard "$NEW"
+# Refuse a version that cannot even start; stay on the one that works.
+if ! node --check server.js || ! node -e "JSON.parse(require('fs').readFileSync('catalog.json','utf8'))"; then
+  echo "Commit $NEW is broken, staying on ${OLD:-nothing}"
+  [ -n "$OLD" ] && git reset -q --hard "$OLD"
+  exit 1
+fi
+if ! cmp -s appstore.service /etc/systemd/system/appstore.service; then
+  cp appstore.service /etc/systemd/system/appstore.service
+  systemctl daemon-reload
+fi
+systemctl restart appstore
+echo "Updated to $(git log -1 --format='%h %s')"

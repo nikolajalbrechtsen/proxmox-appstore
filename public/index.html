@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proxmox App Store</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e57000'/><path d='M9 12h14l-1.5 11h-11zM12 12a4 4 0 0 1 8 0' fill='none' stroke='white' stroke-width='2.2' stroke-linejoin='round'/></svg>">
+<style>
+:root{
+  --bg:#f4f5f7;--panel:#fff;--panel2:#f0f1f4;--line:#e1e3e8;--text:#1a1d23;--muted:#6b7280;
+  --accent:#e57000;--accent-text:#fff;--ok:#16a34a;--bad:#dc2626;--warn:#d97706;--shadow:0 1px 3px rgba(0,0,0,.08);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1115;--panel:#181b21;--panel2:#20242c;--line:#2a2f39;--text:#e8eaee;--muted:#8b93a1;
+  --accent:#ff8a1f;--accent-text:#1a1000;--ok:#34d399;--bad:#f87171;--warn:#fbbf24;--shadow:none;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button,input,select{font:inherit;color:inherit}
+.hidden{display:none!important}
+header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line)}
+.bar{max-width:1200px;margin:auto;padding:0 16px;display:flex;align-items:center;gap:20px;height:56px}
+.logo{font-weight:700;font-size:16px;display:flex;align-items:center;gap:9px;white-space:nowrap}
+.logo i{width:26px;height:26px;border-radius:7px;background:var(--accent);display:grid;place-items:center;color:var(--accent-text);font-style:normal;font-size:15px}
+nav{display:flex;gap:4px;height:100%}
+nav button{background:none;border:0;border-bottom:2px solid transparent;padding:0 12px;cursor:pointer;color:var(--muted);font-weight:600}
+nav button.on{color:var(--text);border-color:var(--accent)}
+.badge{background:var(--accent);color:var(--accent-text);border-radius:99px;font-size:11px;padding:1px 7px;margin-left:5px}
+.spacer{flex:1}
+main{max-width:1200px;margin:auto;padding:20px 16px 60px}
+.btn{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-text)}
+.btn.danger{color:var(--bad)}
+.btn.sm{padding:4px 9px;font-size:13px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px}
+.stat,.card,.app{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+.stat{padding:14px 16px}
+.stat .k{color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.stat .v{font-size:20px;font-weight:700;margin:2px 0 8px;font-variant-numeric:tabular-nums}
+.stat .v small{font-size:13px;color:var(--muted);font-weight:500}
+.meter{height:6px;border-radius:3px;background:var(--panel2);overflow:hidden}
+.meter b{display:block;height:100%;background:var(--accent);border-radius:3px;transition:width .4s}
+.meter b.hot{background:var(--bad)}
+.tools{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.tools input,.tools select,.field input{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 11px;min-width:0}
+.tools input{flex:1;min-width:160px}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
+.card{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.card.off{opacity:.75}
+.row{display:flex;align-items:center;gap:10px;min-width:0}
+.ico{width:40px;height:40px;border-radius:10px;background:var(--panel2);display:grid;place-items:center;font-weight:700;font-size:17px;color:var(--muted);flex:none;overflow:hidden}
+.ico img{width:28px;height:28px;object-fit:contain}
+.name{font-weight:700;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sub{color:var(--muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grow{flex:1;min-width:0}
+.dot{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;white-space:nowrap}
+.dot:before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.dot.running{color:var(--ok)}.dot.running:before{background:var(--ok)}
+.mini{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;font-size:12px;color:var(--muted)}
+.mini span{display:flex;justify-content:space-between;margin-bottom:3px;font-variant-numeric:tabular-nums}
+.tags{display:flex;gap:5px;flex-wrap:wrap}
+.tag{background:var(--panel2);border-radius:5px;padding:1px 7px;font-size:11.5px;color:var(--muted)}
+.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:auto}
+.app{padding:16px;display:flex;flex-direction:column;gap:10px}
+.app p{margin:0;color:var(--muted);font-size:13px;flex:1}
+.app .foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.app.custom{border-style:dashed}
+.empty{color:var(--muted);text-align:center;padding:50px 0;grid-column:1/-1}
+.group{grid-column:1/-1;margin:10px 0 0;font-size:15px}
+.group:first-child{margin-top:0}
+.group small{color:var(--muted);font-weight:500}
+.job{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-bottom:10px;display:flex;gap:12px;align-items:center}
+.job .st{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.job.failed .st{color:var(--bad)}
+.spin{width:18px;height:18px;border:2.5px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite;flex:none}
+@keyframes s{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:3s}}
+.mark{width:18px;text-align:center;font-weight:700;flex:none}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;padding:16px;z-index:20}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;width:100%;max-width:460px;max-height:92vh;overflow:auto}
+.modal h2{margin:0 0 4px;font-size:18px}
+.modal p{color:var(--muted);margin:4px 0 14px}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.field label{font-size:12.5px;font-weight:600;color:var(--muted)}
+.field input{width:100%}
+.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.modal .end{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.err{color:var(--bad);font-size:13px;min-height:18px;margin:4px 0}
+pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:0 0 12px}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:9px 16px;border-radius:9px;font-weight:600;z-index:30;max-width:90vw}
+@media (max-width:560px){.bar{gap:10px}.logo span{display:none}.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="hidden" id="hdr"><div class="bar">
+  <div class="logo"><i>▣</i><span>Proxmox App Store</span></div>
+  <nav>
+    <button data-tab="overview" class="on">My apps</button>
+    <button data-tab="store">Store</button>
+    <button data-tab="activity">Activity<span class="badge hidden" id="jobBadge"></span></button>
+  </nav>
+  <div class="spacer"></div>
+  <button class="btn sm" id="logout">Sign out</button>
+</div></header>
+
+<main>
+  <section id="overview" class="hidden">
+    <div class="stats" id="stats"></div>
+    <div class="tools">
+      <input id="gq" type="search" placeholder="Search apps and containers…" aria-label="Search">
+      <select id="gf" aria-label="Filter"><option value="">All</option><option value="running">Running</option><option value="stopped">Stopped</option><option value="lxc">Containers</option><option value="qemu">Virtual machines</option></select>
+    </div>
+    <div class="grid" id="guests"></div>
+  </section>
+  <section id="store" class="hidden">
+    <div class="tools">
+      <input id="sq" type="search" placeholder="Search the store…" aria-label="Search the store">
+      <select id="sc" aria-label="Category"></select>
+    </div>
+    <div class="grid" id="apps"></div>
+  </section>
+  <section id="activity" class="hidden"><div id="jobs"></div></section>
+</main>
+<div id="modal"></div>
+<div id="toast" class="hidden" role="status"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ICONS = 'https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/';
+let state = {}, data = null, catalog = [], jobs = [], tab = 'overview', busy = {};
+
+async function api(path, body) {
+  const r = await fetch('/api/' + path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && path !== 'login') { if (state.authed) location.reload(); throw new Error(j.error || 'Not signed in'); }
+  if (!r.ok) throw new Error(j.error || 'Request failed');
+  return j;
+}
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 4500); }
+const bytes = b => { if (!b) return '0'; const u = ['B','KB','MB','GB','TB']; const i = Math.min(4, Math.floor(Math.log(b) / Math.log(1024))); return (b / 1024 ** i).toFixed(i > 2 ? 1 : 0) + ' ' + u[i]; };
+const upt = s => s > 86400 ? Math.floor(s / 86400) + 'd ' + Math.floor(s % 86400 / 3600) + 'h' : s > 3600 ? Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm' : Math.floor(s / 60) + 'm';
+// Replaces {{hex16}} / {{hex64}} in catalog defaults with a random value of that length.
+const fill = s => String(s ?? '').replace(/\{\{hex(\d+)\}\}/g, (_, n) => [...crypto.getRandomValues(new Uint8Array(n / 2))].map(b => b.toString(16).padStart(2, '0')).join(''));
+const pct = (a, b) => b ? Math.min(100, a / b * 100) : 0;
+const meter = p => `<div class="meter"><b class="${p > 90 ? 'hot' : ''}" style="width:${p.toFixed(1)}%"></b></div>`;
+const icon = (slug, name) => `<div class="ico">${slug ? `<img src="${ICONS}${esc(slug)}.svg" alt="" loading="lazy" onerror="this.replaceWith('${esc(name[0] || '?').toUpperCase()}')">` : esc(name[0] || '?').toUpperCase()}</div>`;
+
+// ---------- modal helpers ----------
+function modal(html, onSubmit, dismissable = true) {
+  $('#modal').innerHTML = `<div class="overlay"><form class="modal" role="dialog" aria-modal="true">${html}</form></div>`;
+  const f = $('#modal form');
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const btn = f.querySelector('[type=submit]'), err = f.querySelector('.err');
+    btn.disabled = true; if (err) err.textContent = '';
+    try { await onSubmit(Object.fromEntries(new FormData(f)), f); }
+    catch (x) { if (err) err.textContent = x.message; else toast(x.message); btn.disabled = false; }
+  };
+  if (dismissable) {
+    $('#modal .overlay').onmousedown = e => { if (e.target.classList.contains('overlay')) closeModal(); };
+    f.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModal);
+  }
+  (f.querySelector('[autofocus]') || f.querySelector('input'))?.focus();
+}
+const closeModal = () => $('#modal').innerHTML = '';
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.authed) closeModal(); });
+
+// ---------- setup & login ----------
+function showSetup() {
+  modal(`<h2>Welcome to App Store</h2>
+    <p>Connect it to Proxmox with an API token. Run this once in the Proxmox host shell (Datacenter → pve → Shell), then paste the result below.</p>
+    <pre>pveum role add AppStore -privs "VM.Allocate,VM.Audit,VM.PowerMgmt,VM.Config.Disk,VM.Config.CPU,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Sys.Audit,Sys.AccessNetwork,SDN.Use"
+pveum user add appstore@pve
+pveum acl modify / -user appstore@pve -role AppStore
+pveum user token add appstore@pve web --privsep 0</pre>
+    <div class="field"><label>Proxmox host</label><input name="host" value="192.168.1.115" required></div>
+    <div class="field"><label>Token ID</label><input name="tokenId" value="appstore@pve!web" required autocomplete="off"></div>
+    <div class="field"><label>Token secret (the "value" printed by the last command)</label><input name="secret" ${state.dev ? '' : 'required'} autocomplete="off" autofocus></div>
+    <div class="field"><label>Choose a password for this App Store</label><input name="password" type="password" minlength="8" required autocomplete="new-password"></div>
+    <div class="err"></div>
+    <div class="end"><button class="btn primary" type="submit">Connect</button></div>`,
+    async v => { await api('setup', v); location.reload(); }, false);
+}
+function showLogin() {
+  modal(`<h2>App Store</h2><p>Sign in to manage your apps.</p>
+    <div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password" autofocus></div>
+    <div class="err"></div><div class="end"><button class="btn primary" type="submit">Sign in</button></div>`,
+    async v => { await api('login', v); location.reload(); }, false);
+}
+
+// ---------- overview ----------
+function renderOverview() {
+  if (!data) return;
+  const h = data.host, st = data.storages;
+  const run = data.guests.filter(g => g.status === 'running').length;
+  $('#stats').innerHTML = [
+    ['Apps/VMs running', `${run} <small>of ${data.guests.length}</small>`, pct(run, data.guests.length)],
+    ['Host CPU', `${(h.cpu * 100).toFixed(0)}% <small>of ${h.maxcpu} cores</small>`, h.cpu * 100],
+    ['Host memory', `${bytes(h.mem)} <small>of ${bytes(h.maxmem)}</small>`, pct(h.mem, h.maxmem)],
+    ...st.map(s => [`Storage · ${esc(s.name)}`, `${bytes(s.used)} <small>of ${bytes(s.total)}</small>`, pct(s.used, s.total)]),
+  ].map(([k, v, p]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${meter(p)}</div>`).join('');
+
+  const q = $('#gq').value.toLowerCase(), f = $('#gf').value;
+  const list = data.guests.filter(g => (!q || [g.name, g.vmid, g.ip, ...g.tags].join(' ').toLowerCase().includes(q)) && (!f || g.status === f || g.type === f));
+  const card = g => {
+    const on = g.status === 'running', b = busy[g.vmid];
+    const cat = catalog.find(a => a.id === g.app) || catalog.find(a => g.name.includes(a.id));
+    const a = (act, label, cls = '') => `<button class="btn sm ${cls}" data-act="${act}" data-id="${g.vmid}" ${b || (g.self && act !== 'start') ? 'disabled' : ''}>${label}</button>`;
+    return `<div class="card ${on ? '' : 'off'}">
+      <div class="row">${icon(cat ? cat.icon : g.name.replace(/[^a-z0-9-]/g, ''), g.name)}
+        <div class="grow"><div class="name">${esc(g.name)}</div>
+          <div class="sub">${g.type === 'lxc' ? 'Container' : 'VM'} ${g.vmid}${g.ip ? ' · ' + esc(g.ip) : ''}${on ? ' · up ' + upt(g.uptime) : ''}</div></div>
+        ${b ? '<div class="spin"></div>' : `<span class="dot ${esc(g.status)}">${on ? 'Running' : 'Stopped'}</span>`}
+      </div>
+      <div class="mini">
+        <div><span><b>CPU</b>${on ? (g.cpu * 100).toFixed(1) + '%' : '–'} · ${g.maxcpu} core${g.maxcpu > 1 ? 's' : ''}</span>${meter(on ? g.cpu * 100 : 0)}</div>
+        <div><span><b>Memory</b>${on ? bytes(g.mem) + ' / ' : ''}${bytes(g.maxmem)}</span>${meter(on ? pct(g.mem, g.maxmem) : 0)}</div>
+      </div>
+      ${g.tags.length || g.self ? `<div class="tags">${g.self ? '<span class="tag">this app store</span>' : ''}${g.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
+      <div class="actions">
+        ${g.url && on ? `<a class="btn sm primary" href="${esc(g.url)}" target="_blank" rel="noopener">Open</a>` : ''}
+        ${on ? a('reboot', 'Restart') + a('shutdown', 'Stop') : a('start', 'Start') + a('delete', 'Delete', 'danger')}
+      </div></div>`;
+  };
+  // Apps (containers) first, then virtual machines, each under its own heading.
+  const group = (title, items) => items.length ? `<h2 class="group">${title} <small>${items.length}</small></h2>` + items.map(card).join('') : '';
+  $('#guests').innerHTML = group('Apps', list.filter(g => g.type === 'lxc')) + group('Virtual machines', list.filter(g => g.type === 'qemu'))
+    || '<div class="empty">Nothing matches.</div>';
+}
+async function refresh() {
+  try { data = await api('guests'); if (tab === 'overview') renderOverview(); } catch (e) { if (!data) toast(e.message); }
+}
+$('#guests').onclick = e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const g = data.guests.find(x => x.vmid == b.dataset.id), act = b.dataset.act;
+  if (act === 'start') return doAction(g, act);
+  if (act === 'delete') return modal(`<h2>Delete ${esc(g.name)}?</h2>
+    <p>This permanently destroys ${g.type === 'lxc' ? 'container' : 'virtual machine'} ${g.vmid} and all of its data. This cannot be undone.</p>
+    <div class="field"><label>Type <b>${esc(g.name)}</b> to confirm</label><input name="c" autocomplete="off" autofocus></div><div class="err"></div>
+    <div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn danger" type="submit">Delete forever</button></div>`,
+    async v => { if (v.c !== g.name) throw new Error('The name does not match.'); closeModal(); doAction(g, 'delete'); });
+  modal(`<h2>${act === 'reboot' ? 'Restart' : 'Stop'} ${esc(g.name)}?</h2><p>The app will be ${act === 'reboot' ? 'briefly unavailable' : 'unavailable until you start it again'}.</p>
+    <div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit" autofocus>${act === 'reboot' ? 'Restart' : 'Stop'}</button></div>`,
+    async () => { closeModal(); doAction(g, act); });
+};
+async function doAction(g, act) {
+  busy[g.vmid] = 1; renderOverview();
+  try { await api(`guests/${g.type}/${g.vmid}/${act}`, {}); toast(`${g.name}: ${{ start: 'started', shutdown: 'stopped', reboot: 'restarted', delete: 'deleted' }[act]}`); }
+  catch (e) { toast(e.message); }
+  delete busy[g.vmid]; await refresh();
+}
+$('#gq').oninput = $('#gf').onchange = renderOverview;
+
+// ---------- store ----------
+function renderStore() {
+  const cats = [...new Set(catalog.map(a => a.category))].sort();
+  const sc = $('#sc'); if (sc.options.length !== cats.length + 1) sc.innerHTML = '<option value="">All categories</option>' + cats.map(c => `<option>${esc(c)}</option>`).join('');
+  const q = $('#sq').value.toLowerCase(), c = sc.value;
+  const installed = new Set((data ? data.guests : []).map(g => g.app).filter(Boolean));
+  $('#apps').innerHTML = catalog.filter(a => (!c || a.category === c) && (!q || (a.name + a.desc + a.category).toLowerCase().includes(q))).map(a => `
+    <div class="app"><div class="row">${icon(a.icon, a.name)}<div class="grow"><div class="name">${esc(a.name)}</div><div class="sub">${esc(a.category)}${installed.has(a.id) ? ' · installed' : ''}</div></div></div>
+      <p>${esc(a.desc)}</p>
+      <div class="foot"><span class="sub">${a.cores} core${a.cores > 1 ? 's' : ''} · ${a.memory >= 1024 ? a.memory / 1024 + ' GB' : a.memory + ' MB'} · ${a.disk} GB disk</span>
+      <button class="btn primary sm" data-install="${esc(a.id)}">Install</button></div></div>`).join('') + (!q && !c || 'custom docker image'.includes(q) ? `
+    <div class="app custom"><div class="row"><div class="ico">+</div><div class="grow"><div class="name">Custom image</div><div class="sub">Any Docker / OCI image</div></div></div>
+      <p>Run any image from Docker Hub, GHCR or another registry as a container.</p>
+      <div class="foot"><span></span><button class="btn sm" data-install="custom">Set up</button></div></div>` : '');
+}
+$('#sq').oninput = $('#sc').onchange = renderStore;
+$('#apps').onclick = e => {
+  const b = e.target.closest('[data-install]'); if (!b) return;
+  const custom = b.dataset.install === 'custom';
+  const a = custom ? { id: 'custom', name: 'Custom image', cores: 1, memory: 512, disk: 4, env: [] } : catalog.find(x => x.id === b.dataset.install);
+  const taken = new Set((data ? data.guests : []).map(g => g.name));
+  let host = custom ? '' : a.id; for (let i = 2; taken.has(host); i++) host = `${a.id}-${i}`;
+  modal(`<h2>Install ${esc(a.name)}</h2><p>${custom ? 'Creates a new container from the image you choose.' : 'One click creates a new container and starts the app. The defaults are fine.'}</p>
+    ${custom ? `<div class="field"><label>Image</label><input name="image" placeholder="e.g. ghcr.io/user/app:latest" required autofocus></div>
+    <div class="field"><label>Web port (for the Open button)</label><input name="port" type="number" value="80" min="1" max="65535"></div>` : ''}
+    <div class="field"><label>Name</label><input name="hostname" value="${esc(host)}" pattern="[a-z0-9]([a-z0-9\\-]*[a-z0-9])?" maxlength="63" required></div>
+    <div class="three">
+      <div class="field"><label>CPU cores</label><input name="cores" type="number" min="1" max="${data ? data.host.maxcpu : 64}" value="${a.cores}" required></div>
+      <div class="field"><label>Memory (MB)</label><input name="memory" type="number" min="64" step="64" value="${a.memory}" required></div>
+      <div class="field"><label>Disk (GB)</label><input name="disk" type="number" min="1" value="${a.disk}" required></div>
+    </div>
+    ${(a.env || []).map(v => `<div class="field"><label>${esc(v.label || v.key)}</label><input name="env:${esc(v.key)}" value="${esc(fill(v.value))}"></div>`).join('')}
+    ${(a.env || []).some(v => /\{\{hex/.test(v.value)) ? '<p>Passwords and keys above were generated for you. Note them down before installing.</p>' : ''}
+    <div class="err"></div>
+    <div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Install</button></div>`,
+    async v => {
+      const env = {}; for (const k in v) if (k.startsWith('env:')) env[k.slice(4)] = v[k];
+      await api('install', { appId: a.id, image: v.image, port: v.port, hostname: v.hostname, cores: v.cores, memory: v.memory, disk: v.disk, env });
+      closeModal(); show('activity'); pollJobs();
+    });
+};
+
+// ---------- activity ----------
+function renderJobs() {
+  const active = jobs.filter(j => j.status === 'queued' || j.status === 'running').length;
+  $('#jobBadge').textContent = active; $('#jobBadge').classList.toggle('hidden', !active);
+  if (tab !== 'activity') return;
+  $('#jobs').innerHTML = jobs.map(j => `<div class="job ${esc(j.status)}">
+    ${j.status === 'done' ? '<div class="mark" style="color:var(--ok)">✓</div>' : j.status === 'failed' ? '<div class="mark" style="color:var(--bad)">✕</div>' : '<div class="spin"></div>'}
+    <div class="grow"><div class="name">${esc(j.appName)} <span class="sub">${esc(j.hostname)}${j.vmid ? ' · container ' + j.vmid : ''}</span></div>
+    <div class="st">${esc(j.status === 'failed' ? j.error : j.status === 'done' && j.ip && !j.url ? 'Installed at ' + j.ip : j.step)}</div></div>
+    ${j.status === 'done' && j.url ? `<a class="btn sm primary" href="${esc(j.url)}" target="_blank" rel="noopener">Open</a>` : ''}</div>`).join('')
+    || '<div class="empty">No installs yet. Pick something from the Store.</div>';
+}
+let jobTimer, seen = {};
+async function pollJobs() {
+  clearTimeout(jobTimer);
+  try { jobs = await api('jobs'); } catch {}
+  for (const j of jobs) {
+    if ((j.status === 'done' || j.status === 'failed') && seen[j.id] === 'active') { toast(j.status === 'done' ? `${j.appName} is installed` : `${j.appName} failed to install`); refresh(); }
+    seen[j.id] = j.status === 'done' || j.status === 'failed' ? 'final' : 'active';
+  }
+  renderJobs();
+  jobTimer = setTimeout(pollJobs, jobs.some(j => j.status === 'queued' || j.status === 'running') ? 1500 : 15000);
+}
+
+// ---------- shell ----------
+function show(t) {
+  tab = t;
+  for (const s of ['overview', 'store', 'activity']) $('#' + s).classList.toggle('hidden', s !== t);
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  ({ overview: renderOverview, store: renderStore, activity: renderJobs })[t]();
+}
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
+$('#logout').onclick = async () => { await api('logout', {}); location.reload(); };
+
+(async () => {
+  state = await api('state');
+  if (!state.configured) return showSetup();
+  if (!state.authed) return showLogin();
+  $('#hdr').classList.remove('hidden');
+  catalog = await api('catalog');
+  show('overview');
+  await refresh(); pollJobs();
+  setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+})().catch(e => toast(e.message));
+</script>
+</body>
+</html>
