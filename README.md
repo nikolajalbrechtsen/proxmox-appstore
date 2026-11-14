@@ -7,6 +7,16 @@ A small web UI for a Proxmox VE host that runs in its own LXC container.
 
 It has no dependencies beyond Node.js, and it talks to Proxmox with a limited API token, not your root password.
 
+## Screenshots
+
+**My apps** – everything running on the host, with one-click controls:
+
+![My apps: overview of containers and virtual machines with status, CPU and memory](docs/my-apps.png)
+
+**Store** – pick an app and click Install:
+
+![Store: grid of apps with an Install button on each](docs/store.png)
+
 ## Requirements
 
 - Proxmox VE **9.1 or newer** (the store uses Proxmox's support for OCI images, which older versions don't have)
