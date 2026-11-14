@@ -59,7 +59,7 @@ async function isScreenshot(url) {
   } catch { return false; }
 }
 async function readme(repo) {
-  for (const name of ['README.md', 'docs/README.md', 'readme.md', 'Readme.md', 'README.MD', 'README.rst', 'README']) {
+  for (const name of ['README.md', '.github/README.md', 'docs/README.md', 'readme.md', 'Readme.md', 'README.MD', 'README.rst', 'README']) {
     const base = `https://raw.githubusercontent.com/${repo}/HEAD/`;
     try { const r = await get(base + name); if (r.ok) return { text: await r.text(), base }; } catch {}
   }
@@ -133,9 +133,10 @@ async function verified(urls) {
   return shots;
 }
 async function one(app) {
+  const repo = REPOS[app.id] || app.repo; // the list above, or a "repo" already written in catalog.json
   delete app.repo; delete app.screenshots;
   let shots = [], from = 'README';
-  const repo = REPOS[app.id], r = repo && await readme(repo);
+  const r = repo && await readme(repo);
   if (r) { app.repo = repo; shots = await verified(images(r.text, r.base)); }
   if (!shots.length && EXTRA[app.id]) { shots = await verified(EXTRA[app.id]); from = 'project site'; }
   for (const list of fromGalleries(app)) if (!shots.length) { shots = await verified(list); from = 'gallery'; }

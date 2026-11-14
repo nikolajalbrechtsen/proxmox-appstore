@@ -3,7 +3,7 @@
 A small web UI for a Proxmox VE host that runs in its own LXC container.
 
 - **My apps** – see all your containers and virtual machines with status, CPU, memory and IP address. Start, stop, restart and delete them.
-- **Store** – install an app with one click. Each app becomes a new container created from a Docker/OCI image. About 100 apps are included (Jellyfin, Uptime Kuma, Vaultwarden, Nextcloud, n8n and more), and you can install any other image with "Custom image".
+- **Store** – install an app with one click. Each app becomes a new container created from a Docker/OCI image. About 200 apps are included (Jellyfin, Uptime Kuma, Vaultwarden, Nextcloud, n8n and more), and you can install any other image with "Custom image".
 
 It has no dependencies beyond Node.js, and it talks to Proxmox with a limited API token, not your root password.
 
