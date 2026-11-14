@@ -22,3 +22,5 @@ Check the updater on the container with `journalctl -u appstore-update -n 20`.
 Add an entry to `catalog.json`: `id`, `name`, `category`, `desc`, `image`, `port` (0 for no web UI),
 default `cores`, `memory` (MB), `disk` (GB) and optional `env` fields. `{{hex16}}` / `{{hex64}}` in an
 env value is replaced by a random string in the install dialog.
+
+The updater log line `Updated to <commit>` confirms each update.
