@@ -140,7 +140,22 @@ function queueInstall(body) {
     if (body.appId !== 'custom') throw new Error('Unknown app');
     app = { id: 'custom', name: body.hostname, image: body.image, port: Number(body.port) || 80, env: [] };
   }
-  const image = normImage(app.image);
+  const P = config.pve, adv = body.advanced || {};
+  // Advanced options: every one is optional and falls back to the simple default.
+  const image = normImage(adv.image || app.image);
+  const opt = { storage: P.storage, bridge: P.bridge, ip: 'dhcp', gw: '', swap: 0, onboot: 1, start: true, vmid: null };
+  const ipv4 = '(25[0-5]|2[0-4]\\d|1?\\d?\\d)(\\.(25[0-5]|2[0-4]\\d|1?\\d?\\d)){3}';
+  if (adv.storage) { if (!/^[A-Za-z][\w.-]*$/.test(adv.storage)) throw new Error('Invalid storage'); opt.storage = adv.storage; }
+  if (adv.bridge) { if (!/^[A-Za-z][\w.-]*$/.test(adv.bridge)) throw new Error('Invalid network bridge'); opt.bridge = adv.bridge; }
+  if (adv.ip && adv.ip !== 'dhcp') {
+    if (!new RegExp(`^${ipv4}/([1-9]|[12]\\d|3[0-2])$`).test(adv.ip)) throw new Error('Static address must look like 192.168.1.50/24');
+    if (adv.gw && !new RegExp(`^${ipv4}$`).test(adv.gw)) throw new Error('Gateway must be an IP address like 192.168.1.1');
+    opt.ip = adv.ip; opt.gw = adv.gw || '';
+  }
+  if (adv.vmid !== undefined && adv.vmid !== '') { opt.vmid = Number(adv.vmid); if (!(Number.isInteger(opt.vmid) && opt.vmid >= 100 && opt.vmid <= 999999999)) throw new Error('Container ID must be a number from 100'); }
+  if (adv.swap !== undefined && adv.swap !== '') { opt.swap = Math.round(Number(adv.swap)); if (!(opt.swap >= 0 && opt.swap <= 262144)) throw new Error('Swap value out of range'); }
+  if (adv.onboot !== undefined) opt.onboot = adv.onboot ? 1 : 0;
+  if (adv.start !== undefined) opt.start = !!adv.start;
   const hostname = String(body.hostname || app.id).toLowerCase();
   if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(hostname)) throw new Error('Name may only contain a-z, 0-9 and "-"');
   const num = (v, d, min, max) => { const n = Math.round(Number(v ?? d)); if (!(n >= min && n <= max)) throw new Error('Resource value out of range'); return n; };
@@ -150,7 +165,7 @@ function queueInstall(body) {
     if (String(v) !== '') env[k] = String(v);
   }
   const job = {
-    id: ++jobSeq, appId: app.id, appName: app.name, hostname, image, env, port: app.port, path: app.path || '',
+    id: ++jobSeq, appId: app.id, appName: app.name, hostname, image, env, port: app.port, path: app.path || '', opt,
     cores: num(body.cores, app.cores || 1, 1, 64), memory: num(body.memory, app.memory || 512, 64, 262144),
     disk: num(body.disk, app.disk || 4, 1, 2000),
     status: 'queued', step: 'Waiting in queue', log: [], started: Date.now(), vmid: null, ip: null, url: null, error: null,
@@ -164,7 +179,7 @@ async function pump() {
   running = true;
   for (let job; (job = jobs.filter(j => j.status === 'queued').pop());) {
     job.status = 'running';
-    try { await runInstall(job); job.status = 'done'; job.step = 'Installed'; }
+    try { await runInstall(job); job.status = 'done'; job.step = job.opt.start ? 'Installed' : 'Installed, not started'; }
     catch (e) { job.status = 'failed'; job.error = e.message; }
     job.finished = Date.now();
   }
@@ -186,12 +201,13 @@ async function runInstall(job) {
     if (!tmpl) throw new Error('Image was downloaded but not found on storage ' + P.tmplStorage);
   }
   try {
-    job.vmid = Number(await pve('GET', '/cluster/nextid'));
+    const O = job.opt;
+    job.vmid = O.vmid || Number(await pve('GET', '/cluster/nextid'));
     step(`Creating container ${job.vmid} (${job.hostname})`);
     await waitTask(await pve('POST', node() + '/lxc', {
-      vmid: job.vmid, hostname: job.hostname, ostemplate: tmpl.volid, rootfs: `${P.storage}:${job.disk}`,
-      cores: job.cores, memory: job.memory, swap: 0, unprivileged: 1, onboot: 1,
-      net0: `name=eth0,bridge=${P.bridge},ip=dhcp,type=veth`,
+      vmid: job.vmid, hostname: job.hostname, ostemplate: tmpl.volid, rootfs: `${O.storage}:${job.disk}`,
+      cores: job.cores, memory: job.memory, swap: O.swap, unprivileged: 1, onboot: O.onboot,
+      net0: `name=eth0,bridge=${O.bridge},ip=${O.ip}${O.gw ? ',gw=' + O.gw : ''},type=veth`,
       tags: `appstore;${job.appId}`.replace(/[^a-z0-9;_-]/g, ''),
       description: `Installed by App Store\n\nApp: ${job.appName}\n\nImage: ${job.image}\n`,
     }));
@@ -210,6 +226,7 @@ async function runInstall(job) {
     Object.assign(merged, job.env);
     await pve('PUT', `${node()}/lxc/${job.vmid}/config`, { env: Object.entries(merged).map(([k, v]) => `${k}=${v}`).join('\0') });
   }
+  if (!job.opt.start) { cache.clear(); return; }
   step('Starting container');
   await waitTask(await pve('POST', `${node()}/lxc/${job.vmid}/status/start`));
   step('Waiting for network address');
@@ -299,6 +316,20 @@ async function api(req, res, url) {
   if (p === '/api/guests' && M === 'GET') return send(res, 200, await listGuests());
   if (p === '/api/catalog' && M === 'GET') return send(res, 200, catalog);
   if (p === '/api/jobs' && M === 'GET') return send(res, 200, jobs);
+  if (p === '/api/options' && M === 'GET') {
+    // Choices for the advanced install form.
+    const [st, br, nextid] = await Promise.all([
+      pve('GET', node() + '/storage', { content: 'rootdir' }).catch(() => []),
+      pve('GET', node() + '/network', { type: 'bridge' }).catch(() => []),
+      pve('GET', '/cluster/nextid').catch(() => ''),
+    ]);
+    const P = config.pve, uniq = (a, d) => [...new Set([d, ...a])];
+    return send(res, 200, {
+      nextid, storage: P.storage, bridge: P.bridge,
+      storages: uniq(st.filter(s => s.active !== 0).map(s => s.storage), P.storage).map(name => { const s = st.find(x => x.storage === name); return { name, free: s ? s.avail : null }; }),
+      bridges: uniq(br.map(b => b.iface), P.bridge),
+    });
+  }
   if (p === '/api/install' && M === 'POST') return send(res, 200, queueInstall(await readBody(req)));
   const m = /^\/api\/guests\/(lxc|qemu)\/(\d+)\/(start|stop|shutdown|reboot|delete)$/.exec(p);
   if (m && M === 'POST') { await readBody(req); await guestAction(m[1], m[2], m[3]); return send(res, 200, { ok: true }); }

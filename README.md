@@ -87,6 +87,17 @@ Do this right after step 2: until setup is finished, anyone on your network who 
 
 Go to **Store**, install **Whoami** (a tiny test app) and click **Open** when it finishes. Then stop and delete it from **My apps**.
 
+## Installing apps
+
+Click an app card in the **Store** to see what it is, with screenshots where the project provides them. **Install** asks only for a name and size, and the defaults work.
+
+**Advanced options** in the install dialog let you also choose:
+
+- the Docker image version (for example `:1.23` instead of `:latest`)
+- the container ID, storage and network bridge
+- a static IP address and gateway instead of DHCP
+- swap, extra environment variables, and whether the app starts at boot or right after installing
+
 ## Good to know
 
 - **The App Store's address comes from DHCP** and can change. Reserve it in your router, or give the container a static IP.
@@ -135,6 +146,10 @@ Add an entry to `catalog.json`:
 | `cores`, `memory`, `disk` | Default resources. Memory is in MB, disk in GB. |
 | `env` | Optional settings shown in the install dialog and passed to the app as environment variables. `{{hex16}}` or `{{hex64}}` in a value becomes a random string of that length. |
 | `icon` | Icon name from [dashboard-icons](https://github.com/homarr-labs/dashboard-icons). |
+| `repo` | Optional GitHub repository (`owner/name`), shown as the Source link in the app's details. |
+| `screenshots` | Optional list of image URLs shown in the app's details. |
+
+`node tools/screenshots.js` fills in `repo` and `screenshots` for the whole catalog from each project's README on GitHub, and checks that every image loads. To refresh only some apps, add their ids: `node tools/screenshots.js jellyfin gitea`. For a new app, add its repository to the list at the top of that file first.
 
 Restart the app afterwards (`systemctl restart appstore`).
 

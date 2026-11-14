@@ -86,6 +86,27 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .field{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
 .field label{font-size:12.5px;font-weight:600;color:var(--muted)}
 .field input{width:100%}
+.field textarea,.field select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 11px;width:100%;font:inherit;color:inherit}
+.field textarea{min-height:70px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.check{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.check input{width:16px;height:16px;accent-color:var(--accent)}
+details.adv{border:1px solid var(--line);border-radius:10px;padding:0 12px;margin-bottom:12px}
+details.adv summary{cursor:pointer;font-weight:600;padding:10px 0;user-select:none}
+details.adv[open] summary{margin-bottom:6px}
+.app.click{cursor:pointer;transition:border-color .15s}
+.app.click:hover,.app.click:focus-visible{border-color:var(--accent);outline:none}
+.modal.wide{max-width:760px}
+.shot{display:block;width:100%;max-height:400px;object-fit:contain;background:var(--panel2);border-radius:10px}
+.thumbs{display:flex;gap:8px;margin:8px 0 0;overflow-x:auto}
+.thumb{flex:none;padding:0;border:2px solid transparent;border-radius:8px;background:var(--panel2);cursor:pointer;overflow:hidden;height:58px}
+.thumb.on{border-color:var(--accent)}
+.thumb img{height:100%;width:90px;object-fit:cover;display:block}
+.info{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:14px 0;font-size:13px}
+.info dt{color:var(--muted);font-weight:600}
+.info dd{margin:0;overflow-wrap:anywhere}
+.info code{font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+.modal a{color:var(--accent)}
 .three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 .modal .end{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
 .err{color:var(--bad);font-size:13px;min-height:18px;margin:4px 0}
@@ -150,8 +171,8 @@ const meter = p => `<div class="meter"><b class="${p > 90 ? 'hot' : ''}" style="
 const icon = (slug, name) => `<div class="ico">${slug ? `<img src="${ICONS}${esc(slug)}.svg" alt="" loading="lazy" onerror="this.replaceWith('${esc(name[0] || '?').toUpperCase()}')">` : esc(name[0] || '?').toUpperCase()}</div>`;
 
 // ---------- modal helpers ----------
-function modal(html, onSubmit, dismissable = true) {
-  $('#modal').innerHTML = `<div class="overlay"><form class="modal" role="dialog" aria-modal="true">${html}</form></div>`;
+function modal(html, onSubmit, dismissable = true, cls = '') {
+  $('#modal').innerHTML = `<div class="overlay"><form class="modal ${cls}" role="dialog" aria-modal="true">${html}</form></div>`;
   const f = $('#modal form');
   f.onsubmit = async e => {
     e.preventDefault();
@@ -262,7 +283,7 @@ function renderStore() {
   const q = $('#sq').value.toLowerCase(), c = sc.value;
   const installed = new Set((data ? data.guests : []).map(g => g.app).filter(Boolean));
   $('#apps').innerHTML = catalog.filter(a => (!c || a.category === c) && (!q || (a.name + a.desc + a.category).toLowerCase().includes(q))).map(a => `
-    <div class="app"><div class="row">${icon(a.icon, a.name)}<div class="grow"><div class="name">${esc(a.name)}</div><div class="sub">${esc(a.category)}${installed.has(a.id) ? ' · installed' : ''}</div></div></div>
+    <div class="app click" data-app="${esc(a.id)}" tabindex="0" role="button" aria-label="${esc(a.name)}: details"><div class="row">${icon(a.icon, a.name)}<div class="grow"><div class="name">${esc(a.name)}</div><div class="sub">${esc(a.category)}${installed.has(a.id) ? ' · installed' : ''}</div></div></div>
       <p>${esc(a.desc)}</p>
       <div class="foot"><span class="sub">${a.cores} core${a.cores > 1 ? 's' : ''} · ${a.memory >= 1024 ? a.memory / 1024 + ' GB' : a.memory + ' MB'} · ${a.disk} GB disk</span>
       <button class="btn primary sm" data-install="${esc(a.id)}">Install</button></div></div>`).join('') + (!q && !c || 'custom docker image'.includes(q) ? `
@@ -272,11 +293,51 @@ function renderStore() {
 }
 $('#sq').oninput = $('#sc').onchange = renderStore;
 $('#apps').onclick = e => {
-  const b = e.target.closest('[data-install]'); if (!b) return;
-  const custom = b.dataset.install === 'custom';
-  const a = custom ? { id: 'custom', name: 'Custom image', cores: 1, memory: 512, disk: 4, env: [] } : catalog.find(x => x.id === b.dataset.install);
+  const b = e.target.closest('[data-install]');
+  if (b) return installDialog(b.dataset.install);
+  const card = e.target.closest('[data-app]');
+  if (card) showApp(card.dataset.app);
+};
+$('#apps').onkeydown = e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-app]')) { e.preventDefault(); showApp(e.target.dataset.app); }
+};
+const resources = a => `${a.cores} core${a.cores > 1 ? 's' : ''} · ${a.memory >= 1024 ? a.memory / 1024 + ' GB' : a.memory + ' MB'} memory · ${a.disk} GB disk`;
+
+// Popup with details and screenshots for one store app.
+function showApp(id) {
+  const a = catalog.find(x => x.id === id); if (!a) return;
+  const shots = a.screenshots || [];
+  const installed = (data ? data.guests : []).filter(g => g.app === a.id);
+  modal(`<div class="row" style="margin-bottom:14px">${icon(a.icon, a.name)}
+      <div class="grow"><h2>${esc(a.name)}</h2><div class="sub">${esc(a.category)}${installed.length ? ' · installed as ' + installed.map(g => esc(g.name)).join(', ') : ''}</div></div></div>
+    ${shots.length ? `<div id="gallery"><a id="shotLink" href="${esc(shots[0])}" target="_blank" rel="noopener" title="Open full size"><img class="shot" id="shotMain" src="${esc(shots[0])}" alt="Screenshot of ${esc(a.name)}" referrerpolicy="no-referrer"></a>
+      ${shots.length > 1 ? `<div class="thumbs">${shots.map((s, i) => `<button type="button" class="thumb ${i ? '' : 'on'}" data-src="${esc(s)}" aria-label="Screenshot ${i + 1}"><img src="${esc(s)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}</div>` : ''}</div>` : ''}
+    <p style="margin-top:14px;color:var(--text)">${esc(a.desc)}</p>
+    <dl class="info">
+      <dt>Docker image</dt><dd><code>${esc(a.image)}</code></dd>
+      <dt>Web page</dt><dd>${a.port ? 'Port ' + a.port + esc(a.path || '') + ', opened with the Open button' : 'None – this app has no web page'}</dd>
+      <dt>Default size</dt><dd>${resources(a)}</dd>
+      ${(a.env || []).length ? `<dt>Settings</dt><dd>${a.env.map(v => esc(v.label || v.key)).join('<br>')}</dd>` : ''}
+      ${a.repo ? `<dt>Source</dt><dd><a href="https://github.com/${esc(a.repo)}" target="_blank" rel="noopener">github.com/${esc(a.repo)}</a></dd>` : ''}
+    </dl>
+    ${shots.length ? '<div class="sub">Screenshots come from the project\'s own page and may show a newer or older version.</div>' : ''}
+    <div class="end"><button class="btn" type="button" data-close>Close</button><button class="btn primary" type="submit" autofocus>Install</button></div>`,
+    async () => installDialog(a.id), true, 'wide');
+  const g = $('#gallery'); if (!g) return;
+  const main = $('#shotMain'), setMain = t => { main.src = $('#shotLink').href = t.dataset.src; g.querySelectorAll('.thumb').forEach(x => x.classList.toggle('on', x === t)); };
+  g.querySelectorAll('.thumb').forEach(t => { t.onclick = () => setMain(t); t.querySelector('img').onerror = () => t.remove(); });
+  // A screenshot that no longer loads: move on to the next one, or drop the gallery.
+  main.onerror = () => { const cur = [...g.querySelectorAll('.thumb')].find(t => t.dataset.src === main.getAttribute('src')); if (cur) cur.remove(); const next = g.querySelector('.thumb'); if (next) setMain(next); else g.remove(); };
+}
+
+async function installDialog(id) {
+  const custom = id === 'custom';
+  const a = custom ? { id: 'custom', name: 'Custom image', cores: 1, memory: 512, disk: 4, env: [] } : catalog.find(x => x.id === id);
+  if (!a) return;
   const taken = new Set((data ? data.guests : []).map(g => g.name));
   let host = custom ? '' : a.id; for (let i = 2; taken.has(host); i++) host = `${a.id}-${i}`;
+  const o = await api('options').catch(() => ({ storages: [], bridges: [], nextid: '' }));
+  const gb = n => n == null ? '' : ` (${(n / 1024 ** 3).toFixed(0)} GB free)`;
   modal(`<h2>Install ${esc(a.name)}</h2><p>${custom ? 'Creates a new container from the image you choose.' : 'One click creates a new container and starts the app. The defaults are fine.'}</p>
     ${custom ? `<div class="field"><label>Image</label><input name="image" placeholder="e.g. ghcr.io/user/app:latest" required autofocus></div>
     <div class="field"><label>Web port (for the Open button)</label><input name="port" type="number" value="80" min="1" max="65535"></div>` : ''}
@@ -288,14 +349,49 @@ $('#apps').onclick = e => {
     </div>
     ${(a.env || []).map(v => `<div class="field"><label>${esc(v.label || v.key)}</label><input name="env:${esc(v.key)}" value="${esc(fill(v.value))}"></div>`).join('')}
     ${(a.env || []).some(v => /\{\{hex/.test(v.value)) ? '<p>Passwords and keys above were generated for you. Note them down before installing.</p>' : ''}
+    <details class="adv"><summary>Advanced options</summary>
+      ${custom ? '' : `<div class="field"><label>Docker image (change the part after ":" to pin a version)</label><input name="adv:image" value="${esc(a.image)}" required></div>`}
+      <div class="two">
+        <div class="field"><label>Container ID</label><input name="adv:vmid" type="number" min="100" placeholder="Automatic${o.nextid ? ' (' + esc(o.nextid) + ')' : ''}"></div>
+        <div class="field"><label>Swap (MB)</label><input name="adv:swap" type="number" min="0" step="64" value="0"></div>
+      </div>
+      <div class="two">
+        <div class="field"><label>Storage</label><select name="adv:storage">${o.storages.map(s => `<option value="${esc(s.name)}" ${s.name === o.storage ? 'selected' : ''}>${esc(s.name)}${gb(s.free)}</option>`).join('')}</select></div>
+        <div class="field"><label>Network bridge</label><select name="adv:bridge">${o.bridges.map(b => `<option ${b === o.bridge ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label>IP address</label><select name="adv:net"><option value="dhcp">Automatic (DHCP)</option><option value="static">Static address</option></select></div>
+      <div class="two hidden" id="staticNet">
+        <div class="field"><label>Address with prefix</label><input name="adv:ip" placeholder="192.168.1.50/24"></div>
+        <div class="field"><label>Gateway</label><input name="adv:gw" placeholder="192.168.1.1"></div>
+      </div>
+      <div class="field"><label>Extra environment variables, one KEY=value per line</label><textarea name="adv:env" spellcheck="false" placeholder="TZ=Europe/Copenhagen"></textarea></div>
+      <label class="check"><input type="checkbox" name="adv:onboot" checked> Start automatically when the Proxmox host boots</label>
+      <label class="check"><input type="checkbox" name="adv:start" checked> Start the app right after installing</label>
+    </details>
     <div class="err"></div>
     <div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Install</button></div>`,
     async v => {
       const env = {}; for (const k in v) if (k.startsWith('env:')) env[k.slice(4)] = v[k];
-      await api('install', { appId: a.id, image: v.image, port: v.port, hostname: v.hostname, cores: v.cores, memory: v.memory, disk: v.disk, env });
+      for (const line of (v['adv:env'] || '').split('\n').map(l => l.trim()).filter(Boolean)) {
+        const m = /^(\w+)=(.*)$/.exec(line); if (!m) throw new Error(`"${line}" is not in the form KEY=value`);
+        env[m[1]] = m[2];
+      }
+      const stat = v['adv:net'] === 'static';
+      if (stat && !v['adv:ip']) throw new Error('Enter the static address, for example 192.168.1.50/24');
+      const advanced = {
+        vmid: v['adv:vmid'], swap: v['adv:swap'], storage: v['adv:storage'], bridge: v['adv:bridge'],
+        ip: stat ? v['adv:ip'].trim() : 'dhcp', gw: stat ? (v['adv:gw'] || '').trim() : '',
+        onboot: 'adv:onboot' in v, start: 'adv:start' in v,
+      };
+      if (!custom && v['adv:image'] && v['adv:image'].trim() !== a.image) advanced.image = v['adv:image'].trim();
+      await api('install', { appId: a.id, image: v.image, port: v.port, hostname: v.hostname, cores: v.cores, memory: v.memory, disk: v.disk, env, advanced });
       closeModal(); show('activity'); pollJobs();
     });
-};
+  const net = $('#modal [name="adv:net"]');
+  net.onchange = () => $('#staticNet').classList.toggle('hidden', net.value !== 'static');
+  // Open the advanced section if a hidden field in it fails validation, so the browser can show the message.
+  $('#modal form').addEventListener('invalid', e => { const d = e.target.closest('details'); if (d) d.open = true; }, true);
+}
 
 // ---------- activity ----------
 function renderJobs() {
