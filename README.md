@@ -9,10 +9,6 @@ It has no dependencies beyond Node.js, and it talks to Proxmox with a limited AP
 
 ## Screenshots
 
-**My apps** – everything running on the host, with one-click controls:
-
-![My apps: overview of containers and virtual machines with status, CPU and memory](docs/my-apps.png)
-
 **Store** – pick an app and click Install:
 
 ![Store: grid of apps with an Install button on each](docs/store.png)
