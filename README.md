@@ -149,7 +149,7 @@ Add an entry to `catalog.json`:
 | `repo` | Optional GitHub repository (`owner/name`), shown as the Source link in the app's details. |
 | `screenshots` | Optional list of image URLs shown in the app's details. |
 
-`node tools/screenshots.js` fills in `repo` and `screenshots` for the whole catalog from each project's README on GitHub, and checks that every image loads. To refresh only some apps, add their ids: `node tools/screenshots.js jellyfin gitea`. For a new app, add its repository to the list at the top of that file first.
+`node tools/screenshots.js` fills in `repo` and `screenshots` for the whole catalog and checks that every image loads. It looks in each project's README on GitHub first, then in the CasaOS and Umbrel app-store galleries, then on the project's website. To refresh only some apps, add their ids: `node tools/screenshots.js jellyfin gitea`. To fill in only the apps that have none: `node tools/screenshots.js --missing`. For a new app, add its repository to the list at the top of that file first.
 
 Restart the app afterwards (`systemctl restart appstore`).
 

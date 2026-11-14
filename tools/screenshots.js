@@ -71,7 +71,7 @@ function images(text, base) {
     const w = /width=["']?(\d+)/i.exec(tag);
     if (!src || (w && Number(w[1]) < 300) || NOT_A_SCREENSHOT.test(src + ' ' + alt)) return;
     try {
-      let u = new URL(src.replace(/&amp;/g, '&'), base).href.replace(/^(https:\/\/github\.com\/[^/]+\/[^/]+)\/blob\//, '$1/raw/');
+      let u = new URL(src.replace(/&amp;/g, '&').replace(/^\/(?!\/)/, ''), base).href.replace(/^(https:\/\/github\.com\/[^/]+\/[^/]+)\/blob\//, '$1/raw/');
       if (/^https:/.test(u) && !out.includes(u)) out.push(u);
     } catch {}
   };
@@ -82,20 +82,73 @@ function images(text, base) {
   }
   return out;
 }
+// ---- fallbacks when the README has no usable screenshot ----
+// 1. Two public app-store galleries that keep screenshots per app.
+const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+const ALIAS = { 'it-tools': ['ittools'], 'actual-budget': ['actual', 'actualbudget'], filebrowser: ['filebrowser'], trilium: ['triliumnotes'], technitium: ['technitiumdns'] };
+let galleries;
+async function loadGalleries() {
+  const tree = async repo => {
+    for (const br of ['main', 'master']) {
+      const r = await get(`https://api.github.com/repos/${repo}/git/trees/${br}?recursive=1`);
+      if (r.ok) return { br, paths: (await r.json()).tree.map(t => t.path) };
+    }
+    console.log('Could not list ' + repo + ' (GitHub API limit?)'); return { paths: [] };
+  };
+  const [casa, umbrel] = await Promise.all([tree('IceWhaleTech/CasaOS-AppStore'), tree('getumbrel/umbrel-apps-gallery')]);
+  const out = { casa: {}, umbrel: {} }, nat = (a, b) => a.localeCompare(b, 'en', { numeric: true });
+  for (const p of casa.paths) {
+    const m = /^Apps\/([^/]+)\/(.*screenshot.*\.(?:png|jpe?g|webp))$/i.exec(p);
+    if (m) (out.casa[norm(m[1])] ||= []).push(`https://cdn.jsdelivr.net/gh/IceWhaleTech/CasaOS-AppStore@${casa.br}/${encodeURI(p)}`);
+  }
+  for (const p of umbrel.paths) {
+    const m = /^([^/]+)\/\d+\.(?:png|jpe?g|webp)$/i.exec(p);
+    if (m) (out.umbrel[norm(m[1])] ||= []).push('https://getumbrel.github.io/umbrel-apps-gallery/' + p);
+  }
+  for (const g of Object.values(out)) for (const k in g) g[k].sort(nat);
+  return out;
+}
+function fromGalleries(app) {
+  const keys = [norm(app.id), norm(app.name), ...(ALIAS[app.id] || [])];
+  return [galleries.casa, galleries.umbrel].map(g => g[keys.find(k => g[k])]).filter(Boolean); // one list per gallery
+}
+// Hand-picked screenshots on the project's own site, for apps the automatic sources miss.
+const EXTRA = {
+  sabnzbd: ['interface', 'history-details', 'file-lists'].map(n => `https://sabnzbd.org/images/landing/screenshots/${n}.png`),
+  pgadmin: ['dashboard', 'viewdata', 'properties', 'activity'].map(n => `https://www.pgadmin.org/static/COMPILED/assets/img/screenshots/pgadmin4-${n}.png`),
+};
+// 2. The project's own website, for apps that are in neither gallery.
+const WEBSITES = {
+  kanboard: 'https://kanboard.org/', silverbullet: 'https://silverbullet.md/', dokuwiki: 'https://www.dokuwiki.org/dokuwiki', radicale: 'https://radicale.org/v3.html',
+  gogs: 'https://gogs.io/', pgadmin: 'https://www.pgadmin.org/screenshots/', prometheus: 'https://prometheus.io/docs/visualization/browser/',
+  drawio: 'https://www.drawio.com/', linkding: 'https://linkding.link/', cyberchef: 'https://github.com/gchq/CyberChef/wiki',
+};
+async function fromWebsite(app) {
+  const url = WEBSITES[app.id]; if (!url) return [];
+  try { const r = await get(url); return r.ok ? images(await r.text(), url) : []; } catch { return []; }
+}
+async function verified(urls) {
+  const shots = [];
+  for (const u of urls.slice(0, 12)) { if (shots.length < 4 && await isScreenshot(u)) shots.push(u); }
+  return shots;
+}
 async function one(app) {
   delete app.repo; delete app.screenshots;
-  const repo = REPOS[app.id]; if (!repo) return `${app.id}: no repository listed`;
-  const r = await readme(repo); if (!r) return `${app.id}: README not found for ${repo}`;
-  app.repo = repo;
-  const shots = [];
-  for (const u of images(r.text, r.base).slice(0, 12)) { if (shots.length < 4 && await isScreenshot(u)) shots.push(u); }
+  let shots = [], from = 'README';
+  const repo = REPOS[app.id], r = repo && await readme(repo);
+  if (r) { app.repo = repo; shots = await verified(images(r.text, r.base)); }
+  if (!shots.length && EXTRA[app.id]) { shots = await verified(EXTRA[app.id]); from = 'project site'; }
+  for (const list of fromGalleries(app)) if (!shots.length) { shots = await verified(list); from = 'gallery'; }
+  if (!shots.length) { shots = await verified(await fromWebsite(app)); from = 'website'; }
   if (shots.length) app.screenshots = shots;
-  return `${app.id}: ${shots.length} screenshot(s)`;
+  return `${app.id}: ${shots.length ? shots.length + ' from ' + from : 'none'}${repo && !r ? ' (README not found for ' + repo + ')' : ''}`;
 }
 (async () => {
   const catalog = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-  const only = process.argv.slice(2); // optional: app ids to refresh, default all
-  const todo = only.length ? catalog.filter(a => only.includes(a.id)) : catalog;
+  // Arguments: app ids to refresh, or --missing for only the apps without screenshots. Default: all.
+  const args = process.argv.slice(2);
+  const todo = args.includes('--missing') ? catalog.filter(a => !a.screenshots) : args.length ? catalog.filter(a => args.includes(a.id)) : catalog;
+  galleries = await loadGalleries();
   for (let i = 0; i < todo.length; i += 8) console.log((await Promise.all(todo.slice(i, i + 8).map(one))).join('\n'));
   fs.writeFileSync(FILE, '[\n' + catalog.map(a => '  ' + JSON.stringify(a)).join(',\n') + '\n]\n');
   const n = catalog.filter(a => a.screenshots).length;
