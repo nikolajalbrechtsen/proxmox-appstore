@@ -16,8 +16,8 @@ use warnings;
 use JSON::PP;
 use Fcntl qw(:mode O_WRONLY O_CREAT O_EXCL);
 
-my $VERSION = 1;
-my $MAX_WRITE = 5_000_000;
+my $VERSION = 2;
+my $MAX_WRITE = 70_000_000;
 my $json = JSON::PP->new->utf8;
 
 sub fail { print STDERR "ERR: $_[0]\n"; exit 1; }
@@ -130,6 +130,31 @@ if ($op eq 'read') {
   exit 0;
 }
 
+# A piece of a file that keeps growing, such as a log. Answers "start size" on a line of its own, then the bytes
+# from `offset` on. Without an offset it gives the end of the file; an offset past the end means the file was
+# started over, so it begins again from the top.
+if ($op eq 'tail') {
+  my @s = stat($p) or fail('NOFILE');
+  fail('NOTFILE') unless S_ISREG($s[2]);
+  my $size = $s[7];
+  my $max = ($r->{max} // '') =~ /^[0-9]+$/ && $r->{max} > 0 && $r->{max} <= 1_000_000 ? $r->{max} + 0 : 65536;
+  my $from = $r->{offset};
+  my $start = !defined $from || ref $from || $from !~ /^[0-9]+$/ ? ($size > $max ? $size - $max : 0) : $from > $size ? 0 : $from + 0;
+  open(my $fh, '<', $p) or fail("Cannot open this file: $!");
+  binmode($fh);
+  defined sysseek($fh, $start, 0) or fail("Cannot read this file: $!");
+  print STDOUT "$start $size\n";
+  my $left = $max;
+  while ($left > 0) {
+    my $n = sysread($fh, my $buf, $left < 65536 ? $left : 65536);
+    fail("Cannot read this file: $!") unless defined $n;
+    last unless $n;
+    print STDOUT $buf or exit 1;
+    $left -= $n;
+  }
+  exit 0;
+}
+
 if ($op eq 'write') {
   my $size = $r->{size} // '';
   fail('Bad size') unless $size =~ /^[0-9]+$/ && $size <= $MAX_WRITE;
@@ -141,8 +166,9 @@ if ($op eq 'write') {
   }
   fail('The file arrived incomplete, nothing was changed') unless length($data) == $size;
   my $fh;
-  if ($r->{create}) {
-    fail('Something with that name already exists') if lstat($p);
+  my $exists = lstat($p) ? 1 : 0;
+  if ($r->{create} && !($r->{replace} && $exists)) {     # `replace` writes over a file that is already there
+    fail('Something with that name already exists') if $exists;
     sysopen($fh, $p, O_WRONLY | O_CREAT | O_EXCL, 0644) or fail("Cannot create this file: $!");
     own($p);
   } else {

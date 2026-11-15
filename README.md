@@ -193,6 +193,22 @@ Click an app card in the **Store** to see what it is, with screenshots where the
 - **Files** – browse the app's files, edit text files, download, rename, delete, and create files and folders. See [File browser](#file-browser) for the one-time setup.
 - **App settings** – the app's environment variables, and the port, path and HTTPS setting used by the **Open** button. Environment changes take effect when the app restarts; the page offers to restart it for you.
 
+A game server gets its own set of tabs; see [Game servers](#game-servers).
+
+## Game servers
+
+**Minecraft Server** (Java Edition) from the store has a Manage page made for running a game server. The header shows the address players connect to, and a **Kill** button next to **Stop** for a server that hangs.
+
+- **Console** – the server's log as it is written, and a line to type commands in (arrow up brings back earlier commands). Next to it is the list of players who are online. **Manage** on a player lets you send a message, kick, ban, make or remove an operator and set the game mode. **Whitelist**, **Ban list** and **Operators** show each list and add or remove a player by name.
+- **Plugins** – the plugins that are installed, with enable, disable and delete, and **Config** to open a plugin's settings folder. **Upload .jar** adds a file from your computer. The search installs plugins from [Modrinth](https://modrinth.com) and only offers versions that fit the server's type and Minecraft version. Plugins are loaded at start, so the page offers a restart after a change. On a Fabric, Forge or NeoForge server the tab is called **Mods** and works on the `mods` folder. A Vanilla server cannot load plugins; the tab offers to switch it to Paper.
+- **Files** – the file browser, opened in the server's data folder `/data`, with shortcuts to `server.properties`, the world, the plugins and the logs.
+- **Settings** – server name, max players, port, game mode, difficulty, PvP, whitelist, online mode, server type, Minecraft version, Java memory, seed, view distance and the EULA. The server image writes these into `server.properties` at every start, so change them here and not in the file.
+- **Container** – the same settings as **Container settings** for other apps.
+
+**What it needs.** The console and the Plugins tab read files through the [file browser](#file-browser), so that has to be set up. If you set it up before version 1.11, the Files tab asks you to run its command once more to update the helper on the host. Commands and the player list use the server's own remote console (RCON, port 25575), which the image turns on by itself. The App Store reads the password from `server.properties` and connects straight to the container.
+
+**Good to know.** While the Console tab is open, the App Store asks the host for new log lines every three seconds, and each time shows up as an SSH login in the host's log. Other game servers in the store (Minecraft Bedrock, Factorio, Luanti) still have the ordinary Manage page.
+
 ## File browser
 
 The Proxmox API token cannot read files inside a container, so the **Files** tab goes through the Proxmox host over SSH. This is the one part of the App Store that needs more than the API token, and it is optional: without the setup, everything else works as before.
@@ -206,7 +222,7 @@ The key pair is created in the App Store container the first time you open the F
 
 **What it can reach.** With the setup done, the App Store can read and change every file in every **running, unprivileged** container on the host. Anyone who can sign in to the App Store can therefore do the same. Each request runs as root *of that container*, not of the host, so it cannot follow a link out of the container or change anything on the host. Containers that are stopped or privileged, virtual machines, and the App Store's own container are not available.
 
-**Limits.** The editor opens text files up to 1 MB in UTF-8. Larger files and other files can be downloaded. There is no upload.
+**Limits.** The editor opens text files up to 1 MB in UTF-8. Larger files and other files can be downloaded. **Upload** puts a file of up to 64 MB from your computer in the folder you are looking at.
 
 **Remove it** by running this on the host: `rm /usr/local/bin/appstore-files`, and deleting the line that ends in `appstore-files` from `/root/.ssh/authorized_keys`.
 

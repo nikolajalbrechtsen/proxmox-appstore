@@ -397,7 +397,10 @@ const HELPER_ERRORS = {
   PRIVILEGED: 'The file browser only works with unprivileged containers.',
   TOOLARGE: 'This file is too large to open here. Download it instead.',
   NOTFILE: 'This is not a regular file.',
+  NOFILE: 'This file does not exist yet.',
+  'Unknown request': 'The helper on the Proxmox host is an older version. Open the Files tab and run the setup command again to update it.',
 };
+const MAX_UPLOAD = 64 * 1024 * 1024;   // largest file the Upload button and the plugin installer send to a container
 // Sends one request to the helper. `input` is the file content for a write. With `onData`, the answer is
 // streamed to it; otherwise it is collected and returned as a Buffer.
 function helper(req, { input, onData, timeout = 30000 } = {}) {
@@ -498,6 +501,193 @@ function filesDownload(vmid, p, res) {
   return helper({ op: 'read', vmid, path: p }, { onData: c => { start(); res.write(c); }, timeout: 10 * 60 * 1000 })
     .then(() => { start(); res.end(); }, e => { if (started) res.destroy(); else throw e; });
 }
+// Saves an uploaded file in a folder of the container. `replace` allows writing over a file with the same name.
+async function filesUpload(vmid, dir, name, input, replace) {
+  await helper({ op: 'write', vmid, path: path.posix.join(filePath(dir), fileName(name)), size: input.length, create: true, replace: !!replace }, { input, timeout: 5 * 60 * 1000 });
+  return { ok: true };
+}
+
+// ---------- game servers ----------
+// Apps marked "game" in the catalog get a console, a player list and a plugin manager on the Manage page.
+// The console reads the server's log through the file helper. Commands and the player list go over the game's
+// own remote console (RCON), straight from here to the container, so the helper never has to run anything.
+const net = require('net');
+const GAMES = {
+  minecraft: { data: '/data', log: '/data/logs/latest.log', props: '/data/server.properties', ops: '/data/ops.json' },
+};
+const STARTING = 'The server is still starting. Commands and the player list work once it is ready.';
+function gameOf(vmid) {
+  const a = apps[vmid], c = a && catalog.find(x => x.id === a.appId), G = c && GAMES[c.game];
+  if (!G) throw new Error('This app is not a game server');
+  return G;
+}
+// New lines of the log since `pos` (null: the end of the log). Only whole lines are returned, so a line that is
+// still being written, or a character cut in half, waits for the next call.
+async function gameLog(vmid, G, pos, max) {
+  const req = { op: 'tail', vmid, path: G.log, max };
+  if (pos != null) req.offset = pos;
+  let buf;
+  try { buf = await helper(req); }
+  catch (e) { if (/does not exist yet/.test(e.message)) return { pos: 0, text: '', reset: pos != null && pos !== 0 }; throw e; }
+  const nl = buf.indexOf(10), start = Number(buf.subarray(0, nl).toString().split(' ')[0]);
+  if (nl < 0 || !Number.isInteger(start)) throw new Error('Unexpected answer from the file helper');
+  let body = buf.subarray(nl + 1), from = start;
+  if (pos == null && start > 0) { const i = body.indexOf(10) + 1; from += i; body = body.subarray(i); }   // begins in the middle of a line
+  const end = body.lastIndexOf(10), take = end >= 0 ? end + 1 : body.length >= max ? body.length : 0;
+  return { pos: from + take, text: body.subarray(0, take).toString('utf8'), reset: pos != null && start !== pos };
+}
+
+// ----- RCON: one open connection per server, closed after two minutes without use -----
+const rcons = new Map(), rconQueue = new Map();
+const rconPacket = (id, type, body) => { const b = Buffer.from(body, 'utf8'), p = Buffer.alloc(14 + b.length); p.writeInt32LE(10 + b.length, 0); p.writeInt32LE(id, 4); p.writeInt32LE(type, 8); b.copy(p, 12); return p; };
+function rconConnect(host, port, password) {
+  const sock = net.connect({ host, port });
+  let buf = Buffer.alloc(0), cur = null, dead = null, seq = 0, idle;
+  const close = e => {
+    if (dead) return;
+    dead = e || new Error('The connection to the server was closed');
+    clearTimeout(idle); sock.destroy();
+    if (cur) { clearTimeout(cur.timer); cur.reject(dead); cur = null; }
+  };
+  // A long answer arrives in several packets. To know where it ends, every command is followed by a request the
+  // server does not know: it answers those in order too, so that answer marks the end.
+  const ask = (type, body) => new Promise((resolve, reject) => {
+    if (dead) return reject(dead);
+    const id = seq += 2;
+    cur = { id, type, out: '', resolve, reject, timer: setTimeout(() => close(new Error('The server did not answer in time')), 8000) };
+    sock.write(rconPacket(id, type, body));
+    if (type === 2) sock.write(rconPacket(id + 1, 100, ''));
+  });
+  const done = v => { const c = cur; cur = null; clearTimeout(c.timer); c.resolve(v); };
+  sock.on('data', d => {
+    buf = Buffer.concat([buf, d]);
+    while (buf.length >= 4) {
+      const len = buf.readInt32LE(0);
+      if (len < 10 || len > 1e6) return close(new Error('Unexpected answer from the server'));
+      if (buf.length < 4 + len) break;
+      const id = buf.readInt32LE(4), type = buf.readInt32LE(8), body = buf.toString('utf8', 12, 2 + len);
+      buf = buf.subarray(4 + len);
+      if (!cur) continue;
+      if (cur.type === 3) { if (type === 2) { if (id === -1) close(new Error('The server did not accept the remote console password')); else done(); } }
+      else if (id === cur.id) cur.out += body;
+      else if (id === cur.id + 1) done(cur.out);
+    }
+  });
+  sock.on('error', e => close(new Error(e.code === 'ECONNREFUSED' ? STARTING : 'Cannot reach the server: ' + e.message)));
+  sock.on('close', () => close());
+  const touch = () => { clearTimeout(idle); idle = setTimeout(() => close(), 120000); };
+  return { dead: () => !!dead, close: () => close(), login: () => ask(3, password), command: c => { touch(); return ask(2, c); } };
+}
+// Runs one command on the server and returns what it answers. Commands for the same server run one at a time.
+function rcon(vmid, cmd) {
+  const run = async () => {
+    let c = rcons.get(vmid);
+    if (!c || c.dead()) {
+      const g = (await listGuests()).guests.find(x => x.vmid === vmid && x.type === 'lxc');
+      if (!g || g.status !== 'running') throw new Error('The server is not running.');
+      if (!g.ip) throw new Error(STARTING);
+      // The port and password are in the server's own settings file. The image writes a new password there when none is set.
+      let text;
+      try { text = (await helper({ op: 'read', vmid, path: gameOf(vmid).props, max: 2e5 })).toString('utf8'); }
+      catch (e) { throw /No such file/.test(e.message) ? new Error(STARTING) : e; }
+      const props = Object.fromEntries(text.split(/\r?\n/).filter(l => l && !l.startsWith('#') && l.includes('=')).map(l => { const i = l.indexOf('='); return [l.slice(0, i).trim(), l.slice(i + 1).replace(/\\(.)/g, '$1')]; }));
+      if (props['enable-rcon'] !== 'true' || !props['rcon.password']) throw new Error('The remote console (RCON) is turned off for this server, so commands and the player list are not available. Remove ENABLE_RCON under Settings and restart to turn it on.');
+      c = rconConnect(g.ip, Number(props['rcon.port']) || 25575, props['rcon.password']);
+      try { await c.login(); } catch (e) { c.close(); throw e; }
+      rcons.set(vmid, c);
+    }
+    return (await c.command(cmd)).replace(/§./g, '');
+  };
+  const q = (rconQueue.get(vmid) || Promise.resolve()).then(run, run);
+  rconQueue.set(vmid, q.catch(() => {}));
+  return q;
+}
+// Who is online, from the "list" command: "There are 2 of a max of 20 players online: Alex, Steve".
+async function gamePlayers(vmid) {
+  const lines = (await rcon(vmid, 'list')).split('\n'), nums = (lines[0] || '').match(/\d+/g) || [];
+  const names = lines.flatMap(l => { const i = l.indexOf(':'); return i < 0 ? [] : l.slice(i + 1).split(','); }).map(s => s.trim()).filter(n => /^[\w.*-]{1,32}$/.test(n));
+  const ops = await cached('ops' + vmid, 15000, async () => JSON.parse((await helper({ op: 'read', vmid, path: gameOf(vmid).ops, max: 1e6 })).toString('utf8')).map(o => String(o.name))) || [];
+  return { online: nums.length ? Number(nums[0]) : names.length, max: Number(nums[1]) || 0, players: names.map(name => ({ name, op: ops.includes(name) })), ops };
+}
+
+// ----- plugins and mods -----
+// Which Modrinth loaders fit each server type. Types that are not listed (Vanilla, modpack installers) take neither.
+const MC_LOADERS = {
+  PAPER: ['paper', 'spigot', 'bukkit'], PURPUR: ['purpur', 'paper', 'spigot', 'bukkit'], PUFFERFISH: ['paper', 'spigot', 'bukkit'],
+  SPIGOT: ['spigot', 'bukkit'], BUKKIT: ['bukkit'], FOLIA: ['folia'],
+  FABRIC: ['fabric'], QUILT: ['quilt', 'fabric'], FORGE: ['forge'], NEOFORGE: ['neoforge'],
+};
+const MC_MODS = ['FABRIC', 'QUILT', 'FORGE', 'NEOFORGE'];
+const MODRINTH = 'https://api.modrinth.com/v2';
+const getBuf = (url, max, timeout = 20000) => new Promise((resolve, reject) => {
+  const req = https.get(url, { headers: { 'User-Agent': 'proxmox-appstore' }, timeout }, res => {
+    if (res.statusCode !== 200) { res.resume(); return reject(new Error('Modrinth answered HTTP ' + res.statusCode)); }
+    const parts = []; let n = 0;
+    res.on('data', c => { n += c.length; if (n > max) return req.destroy(new Error('The download is too large')); parts.push(c); });
+    res.on('end', () => resolve(Buffer.concat(parts)));
+  });
+  req.on('timeout', () => req.destroy(new Error('Modrinth took too long to answer'))); req.on('error', e => reject(new Error(/Modrinth|download/.test(e.message) ? e.message : 'Cannot reach Modrinth: ' + e.message)));
+});
+async function gameInfo(vmid) {
+  const G = gameOf(vmid), env = new Map(parseEnv((await pve('GET', `${node()}/lxc/${vmid}/config`)).env));
+  const type = String(env.get('TYPE') || 'VANILLA').toUpperCase(), loaders = MC_LOADERS[type] || null, mods = MC_MODS.includes(type);
+  // The Minecraft version is on one of the first lines the server logs.
+  const version = await cached('mcver' + vmid, 30000, async () => {
+    const m = /Starting minecraft server version ([\w.-]+)/.exec((await gameLog(vmid, G, 0, 30000)).text);
+    if (!m) throw new Error('unknown'); return m[1];
+  });
+  return { type, loaders, kind: loaders ? (mods ? 'mod' : 'plugin') : null, dir: G.data + (mods ? '/mods' : '/plugins'), version };
+}
+async function gamePlugins(vmid) {
+  const info = await gameInfo(vmid);
+  if (!info.kind) return { ...info, items: [] };
+  let entries = [];
+  try { entries = JSON.parse(await helper({ op: 'list', vmid, path: info.dir })).entries; } catch (e) { if (!/No such file/.test(e.message)) throw e; }
+  // A plugin keeps its settings in a folder named after it, next to the .jar file.
+  const dirs = entries.filter(e => e.type === 'd').map(e => e.name);
+  const items = entries.filter(e => e.type === 'f' && /\.jar(\.disabled)?$/i.test(e.name)).map(e => {
+    const name = e.name.replace(/\.jar(\.disabled)?$/i, ''), low = name.toLowerCase();
+    const cfg = info.kind === 'plugin' && dirs.filter(d => low.startsWith(d.toLowerCase())).sort((a, b) => b.length - a.length)[0];
+    return { file: e.name, name, size: e.size, mtime: e.mtime, enabled: /\.jar$/i.test(e.name), config: cfg ? info.dir + '/' + cfg : null };
+  }).sort((a, b) => a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1);
+  return { ...info, items };
+}
+async function gameSearch(vmid, q) {
+  const info = await gameInfo(vmid);
+  if (!info.kind) return { hits: [] };
+  const facets = [[`project_type:${info.kind}`], info.loaders.map(l => 'categories:' + l)];
+  if (info.kind === 'mod') facets.push(['server_side:required', 'server_side:optional']);
+  if (info.version) facets.push(['versions:' + info.version]);
+  const r = JSON.parse(await getBuf(`${MODRINTH}/search?${new URLSearchParams({ query: String(q || '').slice(0, 100), limit: 12, facets: JSON.stringify(facets) })}`, 5e6));
+  return { hits: (r.hits || []).map(h => ({ id: h.project_id, title: h.title, desc: h.description, downloads: h.downloads, icon: /^https:\/\/cdn\.modrinth\.com\//.test(h.icon_url || '') ? h.icon_url : null })) };
+}
+// Enable or disable (a disabled plugin is renamed to .jar.disabled, which the server skips), delete, or install from Modrinth.
+async function gamePluginChange(vmid, b) {
+  const info = await gameInfo(vmid);
+  if (!info.kind) throw new Error('This server type cannot load plugins or mods.');
+  if (b.op === 'install') {
+    if (!/^[A-Za-z0-9]{6,12}$/.test(b.id || '')) throw new Error('Bad request');
+    const qs = { loaders: JSON.stringify(info.loaders) };
+    if (info.version) qs.game_versions = JSON.stringify([info.version]);
+    const versions = JSON.parse(await getBuf(`${MODRINTH}/project/${b.id}/version?${new URLSearchParams(qs)}`, 3e7));
+    const jar = v => (v.files || []).find(f => f.primary && /\.jar$/i.test(f.filename)) || (v.files || []).find(f => /\.jar$/i.test(f.filename));
+    const v = versions.find(x => x.version_type === 'release' && jar(x)) || versions.find(jar);
+    if (!v) throw new Error(`No version of this ${info.kind} fits this server (${info.type}${info.version ? ' ' + info.version : ''}).`);
+    const f = jar(v), name = fileName(f.filename);
+    if (!/^https:\/\/cdn\.modrinth\.com\//.test(f.url) || !(f.size <= MAX_UPLOAD)) throw new Error('This file cannot be installed from here. Download it and use Upload instead.');
+    const data = await getBuf(f.url, MAX_UPLOAD, 2 * 60 * 1000);
+    if (crypto.createHash('sha512').update(data).digest('hex') !== (f.hashes || {}).sha512) throw new Error('The download was damaged on the way. Try again.');
+    await helper({ op: 'mkdir', vmid, path: info.dir }).catch(() => {});   // already there on every server that has started once
+    await filesUpload(vmid, info.dir, name, data, true);
+    return { ok: true, file: name, version: v.version_number, needs: (v.dependencies || []).filter(d => d.dependency_type === 'required').length };
+  }
+  const file = fileName(b.file), p = info.dir + '/' + file;
+  if (!/\.jar(\.disabled)?$/i.test(file)) throw new Error('This is not a plugin file');
+  if (b.op === 'delete') await helper({ op: 'delete', vmid, path: p });
+  else if (b.op === 'toggle') await helper({ op: 'rename', vmid, path: p, to: /\.disabled$/i.test(file) ? p.replace(/\.disabled$/i, '') : p + '.disabled' });
+  else throw new Error('Unknown action');
+  return { ok: true };
+}
 
 // ---------- update check ----------
 // Compares the commit this process was started from with the newest one on GitHub.
@@ -589,6 +779,14 @@ const readBody = (req, max = 1e5) => new Promise((resolve, reject) => {
   let d = ''; req.on('data', c => { d += c; if (d.length > max) req.destroy(); });
   req.on('end', () => { try { resolve(JSON.parse(d || '{}')); } catch { reject(new Error('Invalid JSON')); } });
 });
+// The body of an upload. A file that is too large is read to the end and then refused, so the browser gets the answer.
+const readRaw = (req, max) => new Promise((resolve, reject) => {
+  if (!/^application\/octet-stream/.test(req.headers['content-type'] || '')) return reject(new Error('Expected a file'));
+  const parts = []; let n = 0;
+  req.on('data', c => { n += c.length; if (n > max) parts.length = 0; else parts.push(c); });
+  req.on('end', () => n > max ? reject(new Error('This file is too large to upload here (the limit is 64 MB).')) : resolve(Buffer.concat(parts)));
+  req.on('error', reject);
+});
 
 async function api(req, res, url) {
   const p = url.pathname, M = req.method;
@@ -616,15 +814,41 @@ async function api(req, res, url) {
     return send(res, 200, u);
   }
   if (p === '/api/files/status' && M === 'GET') return send(res, 200, await filesStatus());
-  const f = /^\/api\/guests\/lxc\/(\d+)\/(files|file|download)$/.exec(p);
+  const f = /^\/api\/guests\/lxc\/(\d+)\/(files|file|download|upload)$/.exec(p);
   if (f) {
     const vmid = await filesGuest(f[1]);
+    if (f[2] === 'upload') {
+      if (M !== 'POST') return send(res, 404, { error: 'Not found' });
+      const q = url.searchParams;
+      return send(res, 200, await filesUpload(vmid, q.get('dir'), q.get('name'), await readRaw(req, MAX_UPLOAD), q.get('replace') === '1'));
+    }
     if (f[2] === 'files' && M === 'POST') return send(res, 200, await filesChange(vmid, await readBody(req, 8e6)));
     if (M !== 'GET') return send(res, 404, { error: 'Not found' });
     const fp = filePath(url.searchParams.get('path'));
     if (f[2] === 'files') return send(res, 200, await filesList(vmid, fp));
     if (f[2] === 'file') return send(res, 200, await filesRead(vmid, fp));
     return filesDownload(vmid, fp, res);
+  }
+  const gm = /^\/api\/guests\/lxc\/(\d+)\/game\/(log|command|players|plugins|search)$/.exec(p);
+  if (gm) {
+    const vmid = await filesGuest(gm[1]), G = gameOf(vmid), what = gm[2], q = url.searchParams;
+    if (what === 'log' && M === 'GET') {
+      const pos = q.get('pos');
+      if (pos !== null && !/^\d{1,15}$/.test(pos)) throw new Error('Bad request');
+      return send(res, 200, await gameLog(vmid, G, pos === null ? null : Number(pos), pos === null ? 60000 : 200000));
+    }
+    if (what === 'command' && M === 'POST') {
+      const cmd = String((await readBody(req)).command || '').trim().replace(/^\//, '');
+      if (!cmd || cmd.length > 1000 || /[\x00-\x1f\x7f]/.test(cmd)) throw new Error('Enter a command on one line');
+      const output = await rcon(vmid, cmd);
+      cache.delete('ops' + vmid);   // the command may have been "op" or "deop"
+      return send(res, 200, { output });
+    }
+    if (what === 'players' && M === 'GET') return send(res, 200, await gamePlayers(vmid));
+    if (what === 'plugins' && M === 'GET') return send(res, 200, await gamePlugins(vmid));
+    if (what === 'plugins' && M === 'POST') return send(res, 200, await gamePluginChange(vmid, await readBody(req)));
+    if (what === 'search' && M === 'GET') return send(res, 200, await gameSearch(vmid, q.get('q')));
+    return send(res, 404, { error: 'Not found' });
   }
   if (p === '/api/shortcuts' && M === 'GET') return send(res, 200, shortcuts);
   if (p === '/api/shortcuts' && M === 'POST') return send(res, 200, saveShortcut(await readBody(req)));

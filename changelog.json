@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.11",
+    "date": "2026-11-15",
+    "changes": [
+      { "type": "new", "text": "Game server page for Minecraft Server (Java Edition): a live console with a command line, the players who are online with message, kick, ban, operator and game mode, plus the whitelist, ban list and operators." },
+      { "type": "new", "text": "Plugins tab for Minecraft: see, enable, disable and delete plugins, upload a .jar, and search and install from Modrinth. On Fabric and Forge servers it manages mods." },
+      { "type": "new", "text": "Settings tab for Minecraft with real fields: server name, max players, game mode, difficulty, PvP, whitelist, server type, version, memory, seed and EULA." },
+      { "type": "new", "text": "Upload button in the file browser, for files up to 64 MB." },
+      { "type": "improved", "text": "The helper on the Proxmox host has a new version. If you use the file browser, open the Files tab once and run the command it shows." }
+    ]
+  },
+  {
     "version": "1.10",
     "date": "2026-11-15",
     "changes": [

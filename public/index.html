@@ -153,6 +153,45 @@ pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;ove
 .kind.new{color:var(--ok)}
 .kind.fixed{color:var(--warn)}
 @media (max-width:560px){nav button{padding:0 8px}}
+/* Game servers: console, players, plugins. The console is dark in both themes, like a terminal. */
+.chip{display:inline-flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:3px 4px 3px 10px;font-size:12.5px;color:var(--muted);font-weight:600}
+.chip code{font:12.5px ui-monospace,Consolas,monospace;color:var(--text);font-weight:400}
+.gwrap{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.gwrap .panel{max-width:none;min-width:0}
+.con{flex:999 1 520px;min-width:0;background:#0f1115;color:#dfe3ea;border:1px solid #2a2f39;border-radius:12px;overflow:hidden}
+.conbar,.cin{display:flex;align-items:center;gap:10px;padding:8px 12px;font-size:12.5px;color:#a3abb8}
+.conbar{border-bottom:1px solid #2a2f39;flex-wrap:wrap}
+.conbar label{display:inline-flex;align-items:center;gap:6px}
+.conbar input{accent-color:#ff8a1f}
+.conbar .live{color:#34d399;font-weight:600}
+.conbar .bad{color:#fbbf24}
+.con .btn{background:#20242c;border-color:#2a2f39;color:#e8eaee}
+.con .btn.primary{background:#ff8a1f;border-color:#ff8a1f;color:#1a1000}
+.clog{height:calc(100vh - 430px);min-height:260px;overflow:auto;padding:10px 14px;font:12.5px/1.6 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.clog:focus-visible{outline:2px solid #ff8a1f;outline-offset:-2px}
+.clog .w{color:#fbbf24}.clog .e{color:#f87171}.clog .j{color:#34d399}.clog .c{color:#ff8a1f}.clog .n{color:#8b93a1}
+.cin{border-top:1px solid #2a2f39}
+.cin:focus-within{outline:2px solid #ff8a1f;outline-offset:-2px}
+.cin b{color:#ff8a1f;font:700 14px ui-monospace,Consolas,monospace}
+.cin input{flex:1;min-width:0;background:none;border:0;outline:0;color:#e8eaee;font:13px ui-monospace,Consolas,monospace;padding:6px 0}
+.cin input::placeholder{color:#8b93a1}
+.side{flex:1 1 280px;min-width:0;padding:0;gap:0}
+.prow{display:flex;align-items:center;gap:10px;padding:9px 16px;border-top:1px solid var(--line);min-width:0}
+.prow:first-child{border-top:0;padding-top:13px}
+.prow .ico{width:30px;height:30px;border-radius:7px;font-size:14px}
+.pnote{color:var(--muted);font-size:13px}
+.pmenu{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:0 16px 12px}
+.pmenu select{grid-column:1/-1;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 9px;min-width:0}
+.pfoot{flex-wrap:wrap;gap:6px}
+.banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:10px 14px;margin-bottom:16px}
+.hico{width:34px;height:34px;border-radius:8px;background:var(--panel2);flex:none;object-fit:cover}
+.hdesc{color:var(--muted);font-size:12.5px;overflow-wrap:anywhere}
+.pills{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px;color:var(--muted);font-size:12.5px;font-weight:600}
+.pill{background:var(--panel);border:1px solid var(--line);border-radius:99px;padding:3px 11px;font-weight:600;font-size:12.5px;cursor:pointer}
+.pill:hover{border-color:var(--muted)}
+.gform{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.gform .wide,.gform .check{grid-column:1/-1}
+.gform small{color:var(--muted);font-size:12.5px}
 </style>
 </head>
 <body>
@@ -245,6 +284,12 @@ function modal(html, onSubmit, dismissable = true, cls = '') {
   (f.querySelector('[autofocus]') || f.querySelector('input'))?.focus();
 }
 const closeModal = () => $('#modal').innerHTML = '';
+// The page is served over plain HTTP, where the clipboard API is not available, so copy through a selection.
+function copyText(text, done) {
+  const t = document.createElement('textarea'); t.value = text; t.style.cssText = 'position:fixed;opacity:0'; document.body.append(t); t.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch {}
+  t.remove(); toast(ok ? done : 'Could not copy. Select the text and copy it yourself.');
+}
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.authed) closeModal(); });
 
 // ---------- setup & login ----------
@@ -282,11 +327,11 @@ const catOf = g => catalog.find(a => a.id === g.app) || catalog.find(a => g.name
 const guestIcon = g => { const c = catOf(g); return icon(c ? c.icon : g.name.replace(/[^a-z0-9-]/g, ''), g.name); };
 const guestState = g => busy[g.vmid] ? '<div class="spin"></div>' : `<span class="dot ${esc(g.status)}">${g.status === 'running' ? 'Running' : 'Stopped'}</span>`;
 // Open / Start / Restart / Stop / Delete buttons, shared by the cards and the Manage page.
-function guestButtons(g, manage) {
+function guestButtons(g, manage, kill) {
   const on = g.status === 'running';
   const a = (act, label, cls = '') => `<button class="btn sm ${cls}" data-act="${act}" data-id="${g.vmid}" ${busy[g.vmid] || (g.self && act !== 'start' && act !== 'manage') ? 'disabled' : ''}>${label}</button>`;
   return (g.url && on ? `<a class="btn sm primary" href="${esc(g.url)}" target="_blank" rel="noopener">Open</a>` : '')
-    + (on ? a('reboot', 'Restart') + a('shutdown', 'Stop') : a('start', 'Start')) + (manage ? a('manage', 'Manage') : '') + (on ? '' : a('delete', 'Delete', 'danger'));
+    + (on ? a('reboot', 'Restart') + a('shutdown', 'Stop') + (kill ? a('stop', 'Kill', 'danger') : '') : a('start', 'Start')) + (manage ? a('manage', 'Manage') : '') + (on ? '' : a('delete', 'Delete', 'danger'));
 }
 function renderOverview() {
   if (!data) return;
@@ -326,6 +371,8 @@ async function refresh() {
 }
 $('#guests').onclick = $('#mhead').onclick = e => {
   if (e.target.closest('[data-back]')) return show('overview');
+  const cp = e.target.closest('[data-copy]');
+  if (cp) return copyText(cp.dataset.copy, 'Address copied.');
   const b = e.target.closest('[data-act]'); if (!b) return;
   const g = data.guests.find(x => x.vmid == b.dataset.id), act = b.dataset.act;
   if (!g) return;
@@ -336,13 +383,16 @@ $('#guests').onclick = $('#mhead').onclick = e => {
     <div class="field"><label>Type <b>${esc(g.name)}</b> to confirm</label><input name="c" autocomplete="off" autofocus></div><div class="err"></div>
     <div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn danger" type="submit">Delete forever</button></div>`,
     async v => { if (v.c !== g.name) throw new Error('The name does not match.'); closeModal(); doAction(g, 'delete'); });
+  if (act === 'stop') return modal(`<h2>Kill ${esc(g.name)}?</h2><p>The server is switched off at once, without saving first. What happened since the last save can be lost. Use Stop unless the server hangs.</p>
+    <div class="end"><button class="btn" type="button" data-close autofocus>Cancel</button><button class="btn danger" type="submit">Kill</button></div>`,
+    async () => { closeModal(); doAction(g, 'stop'); });
   modal(`<h2>${act === 'reboot' ? 'Restart' : 'Stop'} ${esc(g.name)}?</h2><p>The app will be ${act === 'reboot' ? 'briefly unavailable' : 'unavailable until you start it again'}.</p>
     <div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit" autofocus>${act === 'reboot' ? 'Restart' : 'Stop'}</button></div>`,
     async () => { closeModal(); doAction(g, act); });
 };
 async function doAction(g, act) {
   busy[g.vmid] = 1; renderOverview(); if (tab === 'manage') renderManageHead();
-  try { await api(`guests/${g.type}/${g.vmid}/${act}`, {}); toast(`${g.name}: ${{ start: 'started', shutdown: 'stopped', reboot: 'restarted', delete: 'deleted' }[act]}`); }
+  try { await api(`guests/${g.type}/${g.vmid}/${act}`, {}); toast(`${g.name}: ${{ start: 'started', shutdown: 'stopped', stop: 'stopped', reboot: 'restarted', delete: 'deleted' }[act]}`); }
   catch (e) { toast(e.message); }
   delete busy[g.vmid]; await refresh();
 }
@@ -353,7 +403,12 @@ $('#gq').oninput = $('#gf').onchange = renderOverview;
 let mg = null;   // { type, vmid, tab, s: settings, err }
 const mguest = () => mg && data && data.guests.find(x => x.vmid == mg.vmid && x.type === mg.type);
 async function openManage(g) {
-  mg = { type: g.type, vmid: g.vmid, tab: 'container', s: null, err: null, files: { path: '/', entries: null, err: null, edit: null, status: null, checked: false } };
+  const game = gameOf(g);
+  mg = { type: g.type, vmid: g.vmid, tab: game ? 'console' : 'container', s: null, err: null,
+    files: { path: game ? game.data : '/', entries: null, err: null, edit: null, status: null, checked: false },
+    con: { pos: null, err: null, wait: 0, n: 0, busy: false, hist: [], hi: 0, players: null, perr: null, open: null, sig: '' },
+    plug: { data: null, err: null, dirty: false, q: '', hits: null, herr: null, hn: 0 } };
+  $('#mbody').innerHTML = '';
   show('manage');
   await loadManage();
 }
@@ -368,10 +423,13 @@ function renderManage() { renderManageHead(); renderManageBody(); }
 function renderManageHead() {
   const g = mguest();
   if (!g) { mg = null; return show('overview'); }
+  // Game servers have no web page to open, so the header shows the address players type into the game.
+  const game = gameOf(g), addr = game && g.ip ? `${g.ip}:${envOf(game.portKey) || game.port}` : '';
   $('#mhead').innerHTML = `<button class="btn sm" type="button" data-back>← My apps</button>${guestIcon(g)}
     <div class="grow"><div class="name">${esc(g.name)}</div>
       <div class="sub">${g.type === 'lxc' ? 'Container' : 'VM'} ${g.vmid}${g.ip ? ' · ' + esc(g.ip) : ''}${g.status === 'running' ? ' · up ' + upt(g.uptime) : ''}</div></div>
-    ${guestState(g)}<div class="actions">${guestButtons(g, false)}</div>`;
+    ${game && g.ip ? `<span class="chip">Connect to <code>${esc(addr)}</code><button class="btn sm" type="button" data-copy="${esc(addr)}">Copy</button></span>` : ''}
+    ${guestState(g)}<div class="actions">${guestButtons(g, false, !!game)}</div>`;
   // What the app uses right now. Follows the same 5-second refresh as the header.
   const on = g.status === 'running', lxc = g.type === 'lxc', cores = `${g.maxcpu} core${g.maxcpu > 1 ? 's' : ''}`;
   const tile = (k, v, p) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${p == null ? '' : meter(p)}</div>`;
@@ -384,12 +442,15 @@ function renderManageHead() {
 }
 function renderManageBody() {
   const g = mguest(); if (!g) return;
-  const lxc = g.type === 'lxc', s = mg.s;
-  $('#mtabs').innerHTML = [['container', lxc ? 'Container settings' : 'Settings'], ...(lxc ? [['files', 'Files'], ['app', 'App settings']] : [])]
-    .map(([k, l]) => `<button type="button" data-mtab="${k}" class="${mg.tab === k ? 'on' : ''}">${l}</button>`).join('');
+  const lxc = g.type === 'lxc', s = mg.s, game = gameOf(g);
+  const tabs = game ? [['console', 'Console'], ['plugins', plugWord()], ['files', 'Files'], ['game', 'Settings'], ['container', 'Container']]
+    : [['container', lxc ? 'Container settings' : 'Settings'], ...(lxc ? [['files', 'Files'], ['app', 'App settings']] : [])];
+  $('#mtabs').innerHTML = tabs.map(([k, l]) => `<button type="button" data-mtab="${k}" class="${mg.tab === k ? 'on' : ''}">${l}</button>`).join('');
+  if (mg.tab === 'console') return renderConsole();
+  if (mg.tab === 'plugins') return renderPlugins();
   if (mg.tab === 'files') return renderFiles();
   if (!s) { $('#mbody').innerHTML = `<div class="empty">${mg.err ? esc(mg.err) : 'Loading…'}</div>`; return; }
-  $('#mbody').innerHTML = `<form class="panel">${mg.tab === 'app' ? appForm(g, s) : containerForm(g, s)}
+  $('#mbody').innerHTML = `<form class="panel">${mg.tab === 'app' ? appForm(g, s) : mg.tab === 'game' ? gameForm(g, s) : containerForm(g, s)}
     ${g.self ? '<p>This is the App Store itself. Change its settings in the Proxmox UI.</p>' : ''}
     <div class="err"></div><div class="end"><button class="btn primary" type="submit" ${g.self ? 'disabled' : ''}>Save</button></div></form>`;
   const f = $('#mbody form'), mode = f.elements.mode;
@@ -398,7 +459,7 @@ function renderManageBody() {
     e.preventDefault();
     const btn = f.querySelector('[type=submit]'), err = f.querySelector('.err');
     btn.disabled = true; err.textContent = '';
-    try { await (mg.tab === 'app' ? saveApp : saveContainer)(g, Object.fromEntries(new FormData(f))); }
+    try { await (mg.tab === 'app' ? saveApp : mg.tab === 'game' ? saveGame : saveContainer)(g, Object.fromEntries(new FormData(f))); }
     catch (x) { err.textContent = x.message; btn.disabled = false; }
   };
 }
@@ -410,8 +471,10 @@ const fq = (g, what, p) => `guests/lxc/${g.vmid}/${what}?path=${encodeURICompone
 // True while the Files tab of this same app is still what is on screen (answers can arrive late).
 const filesShown = me => mg === me && mg.tab === 'files' && tab === 'manage';
 function renderFiles() {
-  const g = mguest(), f = mg.files, box = $('#mbody'), me = mg;
-  const note = (text, btn) => { box.innerHTML = `<div class="panel"><p style="margin:0">${text}</p>${btn ? `<div class="end" style="justify-content:flex-start;margin-top:12px"><button class="btn" type="button" data-f="refresh">${btn}</button></div>` : ''}</div>`; };
+  const g = mguest(), f = mg.files, box = $('#mbody'), me = mg, game = gameOf(g);
+  // Game servers keep everything in one data folder, so the browser starts there and offers shortcuts into it.
+  const jumps = game ? `<div class="pills">Jump to ${game.jumps().map(([l, p, file]) => `<button class="pill" type="button" data-f="${file ? 'openp' : 'cd'}" data-p="${esc(p)}">${esc(l)}</button>`).join('')}</div>` : '';
+  const note = (text, btn) => { box.innerHTML = `${btn === 'Try again' ? jumps : ''}<div class="panel"><p style="margin:0">${text}</p>${btn ? `<div class="end" style="justify-content:flex-start;margin-top:12px"><button class="btn" type="button" data-f="refresh">${btn}</button></div>` : ''}</div>`; };
   if (g.self) return note('This is the App Store itself. Its files are not shown here.');
   if (!f.status) {
     box.innerHTML = '<div class="empty">Loading…</div>';
@@ -443,9 +506,9 @@ function renderFiles() {
       ${file ? `<a class="btn sm" href="/api/${fq(g, 'download', fjoin(f.path, e.name))}" download title="Download">↓</a>` : ''}
       <button class="btn sm" type="button" data-f="rename" data-i="${i}">Rename</button><button class="btn sm danger" type="button" data-f="delete" data-i="${i}">Delete</button></div>`;
   };
-  box.innerHTML = `<div class="panel" style="max-width:none">
+  box.innerHTML = `${jumps}<div class="panel" style="max-width:none">
     <div class="frow" style="border:0;padding-top:0;flex-wrap:wrap"><div class="grow crumbs">${crumbs}</div>
-      <button class="btn sm" type="button" data-f="newfile">New file</button><button class="btn sm" type="button" data-f="newdir">New folder</button><button class="btn sm" type="button" data-f="refresh">Refresh</button></div>
+      <button class="btn sm" type="button" data-f="upload">Upload</button><button class="btn sm" type="button" data-f="newfile">New file</button><button class="btn sm" type="button" data-f="newdir">New folder</button><button class="btn sm" type="button" data-f="refresh">Refresh</button></div>
     ${f.path !== '/' ? `<div class="frow"><span class="fico">▸</span><button class="flink grow" type="button" data-f="cd" data-p="${esc(f.path.replace(/\/[^/]+$/, '') || '/')}">..</button></div>` : ''}
     ${f.entries.map(row).join('') || '<div class="frow"><span class="fmeta">This folder is empty.</span></div>'}
     ${f.truncated ? '<div class="frow"><span class="fmeta">Only the first 5000 entries are shown.</span></div>' : ''}</div>`;
@@ -495,11 +558,24 @@ $('#mbody').addEventListener('click', async e => {
   const me = mg, f = me.files, act = b.dataset.f, en = f.entries && f.entries[b.dataset.i];
   const post = body => api(`guests/lxc/${g.vmid}/files`, body);
   const go = p => { f.entries = null; f.err = null; f.path = p; renderFiles(); };
-  if (act === 'copy') {
-    // The page is served over plain HTTP, where the clipboard API is not available, so copy through a selection.
-    const t = document.createElement('textarea'); t.value = f.status.command; t.style.cssText = 'position:fixed;opacity:0'; document.body.append(t); t.select();
-    let ok = false; try { ok = document.execCommand('copy'); } catch {}
-    t.remove(); return toast(ok ? 'Command copied. Paste it in the host shell.' : 'Could not copy. Select the text and copy it yourself.');
+  if (act === 'copy') return copyText(f.status.command, 'Command copied. Paste it in the host shell.');
+  if (act === 'upload') {
+    const file = await pickFile(); if (!file) return;
+    const dup = (f.entries || []).some(x => x.name === file.name);
+    if (dup && !confirm(`${file.name} is already in this folder. Replace it?`)) return;
+    toast(`Uploading ${file.name}…`);
+    try { await uploadTo(g, f.path, file, dup); toast(`${file.name} uploaded`); } catch (x) { toast(x.message); }
+    if (filesShown(me) && !f.edit) go(f.path);
+    return;
+  }
+  if (act === 'openp') {   // a shortcut straight to one file
+    const p = b.dataset.p;
+    try {
+      const r = await api(fq(g, 'file', p));
+      if (r.binary) toast('This is not a text file.');
+      else if (filesShown(me)) { f.path = p.replace(/\/[^/]+$/, '') || '/'; f.entries = null; f.err = null; f.edit = { path: p, text: r.text, crlf: r.crlf, dirty: false }; renderFiles(); }
+    } catch (x) { toast(x.message); }
+    return;
   }
   if (act === 'recheck') { f.status = null; f.checked = true; return renderFiles(); }
   if (act === 'refresh') return go(f.path);
@@ -533,6 +609,346 @@ $('#mbody').addEventListener('click', async e => {
   }
 });
 window.addEventListener('beforeunload', e => { if (mg && mg.files.edit && mg.files.edit.dirty) e.preventDefault(); });
+
+// ----- Upload: used by the Files tab and for plugin files -----
+const pickFile = accept => new Promise(res => { const i = document.createElement('input'); i.type = 'file'; if (accept) i.accept = accept; i.onchange = () => res(i.files[0] || null); i.click(); });
+async function uploadTo(g, dir, file, replace) {
+  if (file.size > 64 * 1024 * 1024) throw new Error('This file is too large to upload here (the limit is 64 MB).');
+  const r = await fetch(`/api/guests/lxc/${g.vmid}/upload?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.name)}${replace ? '&replace=1' : ''}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'The upload failed');
+}
+
+// ---------- game servers ----------
+// Apps marked "game" in the catalog get their own tabs on the Manage page: Console, Plugins, Files and Settings.
+const MC_MODS = ['FABRIC', 'QUILT', 'FORGE', 'NEOFORGE'];
+const envOf = k => mg && mg.s && mg.s.env ? (mg.s.env.find(e => e[0] === k) || [])[1] : undefined;
+const plugWord = () => MC_MODS.includes(String(envOf('TYPE') || '').toUpperCase()) ? 'Mods' : 'Plugins';
+const GAMES = {
+  minecraft: { port: 25565, portKey: 'SERVER_PORT', data: '/data',
+    jumps: () => [['server.properties', '/data/server.properties', 1], ['World', '/data/world'], [plugWord(), '/data/' + plugWord().toLowerCase()], ['Logs', '/data/logs'], ['Whole container', '/']] },
+};
+const gameOf = g => g && g.type === 'lxc' && !g.self ? GAMES[(catalog.find(a => a.id === g.app) || {}).game] : undefined;
+const gameCmd = async (g, command) => (await api(`guests/lxc/${g.vmid}/game/command`, { command })).output;
+
+// ----- Console tab: the server's log, a command line, and who is online -----
+// Built once and then only added to, so the log keeps its scroll position and a half-typed command is never lost.
+let conTimer = null;
+const conShown = me => mg === me && me.tab === 'console' && tab === 'manage' && !!$('#clog');
+function renderConsole() {
+  if (!$('#clog')) {
+    $('#mbody').innerHTML = `<div class="gwrap"><section class="con" aria-label="Console">
+        <div class="conbar"><span id="cstate"></span><span class="grow"></span>
+          <label><input type="checkbox" id="cfollow" checked> Follow new lines</label><button class="btn sm" type="button" data-g="clear">Clear</button></div>
+        <div class="clog" id="clog" role="log" tabindex="0" aria-label="Server log"></div>
+        <form class="cin" id="cform"><b aria-hidden="true">›</b>
+          <input id="ccmd" aria-label="Server command" placeholder="Type a command and press Enter" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="1000">
+          <button class="btn sm primary" type="submit">Send</button></form>
+      </section><aside class="card side" id="players" aria-label="Players"></aside></div>`;
+    const c = mg.con; c.pos = null; c.sig = ''; c.wait = 0;
+    $('#cform').onsubmit = e => { e.preventDefault(); sendCommand(); };
+    $('#ccmd').onkeydown = e => {   // arrow up and down walk through the commands sent earlier
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      c.hi = Math.max(0, Math.min(c.hist.length, c.hi + (e.key === 'ArrowUp' ? -1 : 1)));
+      e.target.value = c.hist[c.hi] || '';
+    };
+  }
+  conState(); renderPlayers();
+  if (!conTimer) conTimer = setInterval(conTick, 3000);
+  conTick();
+}
+function conState() {
+  const g = mguest(), c = mg.con, on = g.status === 'running';
+  $('#cstate').className = !on ? '' : c.err ? 'bad' : 'live';
+  $('#cstate').textContent = !on ? 'The server is stopped. Start it to see the console.' : c.err ? c.err + (/helper|ssh/i.test(c.err) ? ' The console reads the log through the file browser, which is set up on the Files tab.' : '') : '● Live';
+  $('#ccmd').disabled = $('#cform button').disabled = !on;
+}
+function conAdd(text, cls) {
+  const log = $('#clog'); if (!log || !text) return;
+  const frag = document.createDocumentFragment();
+  for (const raw of text.replace(/\n$/, '').split('\n')) {
+    const line = raw.replace(/\x1b\[[0-9;]*m/g, '').replace(/\r$/, ''), d = document.createElement('div');
+    d.textContent = line || ' ';
+    d.className = cls || (/\b(ERROR|SEVERE|FATAL)\b|Exception/.test(line) ? 'e' : /\bWARN/.test(line) ? 'w' : /(joined|left) the game/.test(line) ? 'j' : '');
+    frag.append(d);
+  }
+  log.append(frag);
+  while (log.childElementCount > 3000) log.firstChild.remove();
+  if ($('#cfollow').checked) log.scrollTop = log.scrollHeight;
+}
+// Every three seconds while the tab is open: fetch the new log lines, and every other time the player list.
+async function conTick() {
+  const me = mg, g = mguest();
+  if (!me || !g || !conShown(me)) { clearInterval(conTimer); conTimer = null; return; }
+  const c = me.con;
+  if (c.busy || document.hidden || Date.now() < c.wait) return;
+  c.busy = true;
+  if (g.status !== 'running') {
+    if (c.pos != null) conAdd('The server stopped.', 'n');
+    c.pos = null; c.err = null; c.players = null; c.perr = null; c.open = null;
+  } else {
+    try {
+      const r = await api(`guests/lxc/${g.vmid}/game/log` + (c.pos == null ? '' : '?pos=' + c.pos));
+      if (conShown(me)) { if (c.pos == null || r.reset) $('#clog').textContent = ''; c.pos = r.pos; c.err = null; conAdd(r.text); }
+    } catch (e) { c.err = e.message; c.wait = Date.now() + 10000; }
+    if (!(c.n++ % 2)) await loadPlayers(me, g);
+  }
+  c.busy = false;
+  if (conShown(me)) { conState(); renderPlayers(); }
+}
+async function sendCommand() {
+  const me = mg, g = mguest(), c = me.con, inp = $('#ccmd'), cmd = inp.value.trim().replace(/^\//, '');
+  if (!cmd || !g) return;
+  if (c.hist[c.hist.length - 1] !== cmd) c.hist.push(cmd);
+  if (c.hist.length > 50) c.hist.shift();
+  c.hi = c.hist.length; inp.value = '';
+  conAdd('› ' + cmd, 'c');
+  try { const out = await gameCmd(g, cmd); if (conShown(me)) conAdd(out.trim() || 'Done.', 'n'); }
+  catch (x) { if (conShown(me)) conAdd(x.message, 'e'); }
+}
+async function loadPlayers(me, g) {
+  try { me.con.players = await api(`guests/lxc/${g.vmid}/game/players`); me.con.perr = null; }
+  catch (e) { me.con.players = null; me.con.perr = e.message; }
+}
+function renderPlayers() {
+  const box = $('#players'), g = mguest(); if (!box || !g) return;
+  const c = mg.con, on = g.status === 'running', P = on ? c.players : null;
+  // Redrawn only when something changed, so an open menu is not closed under the mouse.
+  const sig = JSON.stringify([on, P, c.perr, c.open]); if (sig === c.sig) return; c.sig = sig;
+  const btn = (act, label, cls = '', extra = '') => `<button class="btn sm ${cls}" type="button" data-g="${act}" ${extra}>${label}</button>`;
+  const row = p => `<div class="prow"><div class="ico">${esc(p.name.replace(/^\W+/, '')[0] || '?').toUpperCase()}</div>
+      <div class="grow"><div class="name">${esc(p.name)}</div>${p.op ? '<div class="sub">Operator</div>' : ''}</div>
+      ${btn('pmenu', 'Manage', '', `data-n="${esc(p.name)}" aria-expanded="${c.open === p.name}"`)}</div>
+    ${c.open === p.name ? `<div class="pmenu" data-n="${esc(p.name)}">${btn('pmsg', 'Message')}${btn(p.op ? 'pdeop' : 'pop', p.op ? 'Remove operator' : 'Make operator')}${btn('pkick', 'Kick', 'danger')}${btn('pban', 'Ban', 'danger')}
+      <select data-g="pmode" aria-label="Game mode for ${esc(p.name)}"><option value="">Set game mode…</option>${['Survival', 'Creative', 'Adventure', 'Spectator'].map(m => `<option value="${m.toLowerCase()}">${m}</option>`).join('')}</select></div>` : ''}`;
+  box.innerHTML = `<div class="prow"><b class="grow" style="font-size:15px">Players</b>${P ? `<span class="dot running">${P.online}${P.max ? ' of ' + P.max : ''} online</span>` : ''}</div>
+    ${!on ? '<div class="prow pnote">Start the server to see who is online.</div>'
+      : P ? P.players.map(row).join('') || '<div class="prow pnote">Nobody is online right now.</div>'
+      : `<div class="prow pnote">${esc(c.perr || 'Loading…')}</div>`}
+    ${P ? `<div class="prow pfoot">${btn('plist', 'Whitelist', '', 'data-k="whitelist"')}${btn('plist', 'Ban list', '', 'data-k="bans"')}${btn('plist', 'Operators', '', 'data-k="ops"')}</div>` : ''}`;
+}
+// Whitelist, ban list and operators: shows the list and adds or removes one player by name.
+function listDialog(g, kind) {
+  const [title, list, add, remove, text] = {
+    whitelist: ['Whitelist', 'whitelist list', 'whitelist add', 'whitelist remove', 'When the whitelist is turned on under Settings, only these players can join.'],
+    bans: ['Ban list', 'banlist', 'ban', 'pardon', 'Banned players cannot join until they are removed from this list.'],
+    ops: ['Operators', null, 'op', 'deop', 'Operators can use every command in the game.'],
+  }[kind];
+  const me = mg;
+  const load = async () => {
+    let out;
+    try { out = list ? await gameCmd(g, list) : ((await api(`guests/lxc/${g.vmid}/game/players`)).ops.join(', ') || 'There are no operators.'); } catch (x) { out = x.message; }
+    if ($('#lout')) $('#lout').textContent = out;
+  };
+  const change = async (cmd, f) => {
+    const name = f.elements.name.value.trim();
+    if (!/^[\w.*-]{1,32}$/.test(name)) throw new Error('Enter a player name.');
+    f.querySelector('.err').textContent = (await gameCmd(g, `${cmd} ${name}`)).split('\n')[0];
+    f.elements.name.value = '';
+    await load(); await loadPlayers(me, g); if (conShown(me)) renderPlayers();
+  };
+  modal(`<h2>${title}</h2><p>${text}</p><pre id="lout" style="max-height:180px">Loading…</pre>
+    <div class="field"><label>Player name</label><input name="name" maxlength="32" autocomplete="off" autofocus></div><div class="err" style="color:var(--muted)"></div>
+    <div class="end"><button class="btn" type="button" data-close>Close</button><button class="btn danger" type="button" id="lrem">Remove</button><button class="btn primary" type="submit">Add</button></div>`,
+    async (v, f) => { await change(add, f); f.querySelector('[type=submit]').disabled = false; });
+  $('#lrem').onclick = async e => { const f = e.target.form; try { await change(remove, f); } catch (x) { f.querySelector('.err').textContent = x.message; } };
+  load();
+}
+
+// ----- Plugins tab (Mods on Fabric and Forge servers) -----
+const plugShown = me => mg === me && me.tab === 'plugins' && tab === 'manage';
+async function loadPlugins() {
+  const me = mg, g = mguest(), P = me.plug; if (!g) return;
+  try { P.data = await api(`guests/lxc/${g.vmid}/game/plugins`); P.err = null; } catch (e) { P.data = null; P.err = e.message; }
+  if (plugShown(me)) renderPlugins();
+}
+async function loadHits() {
+  const me = mg, g = mguest(), P = me.plug, n = ++P.hn; if (!g) return;
+  let hits = null, herr = null;
+  try { hits = (await api(`guests/lxc/${g.vmid}/game/search?q=${encodeURIComponent(P.q)}`)).hits; } catch (e) { herr = e.message; }
+  if (P.hn !== n) return;   // a newer search is on its way
+  P.hits = hits; P.herr = herr;
+  if (plugShown(me)) renderHits();
+}
+function renderHits() {
+  const box = $('#phits'), P = mg.plug; if (!box) return;
+  box.innerHTML = P.herr ? `<div class="err">${esc(P.herr)}</div>` : !P.hits ? '<p>Searching…</p>'
+    : P.hits.map((h, i) => `<div class="frow" style="align-items:flex-start">${h.icon ? `<img class="hico" src="${esc(h.icon)}" alt="" loading="lazy">` : '<div class="hico"></div>'}
+        <div class="grow"><b>${esc(h.title)}</b><div class="hdesc">${esc(h.desc)}</div></div>
+        <button class="btn sm primary" type="button" data-g="pinstall" data-i="${i}">Install</button></div>`).join('') || '<p>Nothing found.</p>';
+}
+function renderPlugins() {
+  const g = mguest(), me = mg, P = me.plug, box = $('#mbody'), word = plugWord(), low = word.toLowerCase();
+  const note = html => { box.innerHTML = `<div class="panel">${html}</div>`; };
+  const btn = (act, label, cls = '', extra = '') => `<button class="btn sm ${cls}" type="button" data-g="${act}" ${extra}>${label}</button>`;
+  if (g.status !== 'running') { P.data = null; P.err = null; return note(`<p style="margin:0">Start the server to manage its ${low}.</p>`); }
+  if (P.err) return note(`<p>${esc(P.err)}</p><div class="end" style="justify-content:flex-start">${btn('preload', 'Try again')}</div>`);
+  if (!P.data) { box.innerHTML = '<div class="empty">Loading…</div>'; return loadPlugins(); }
+  const d = P.data;
+  if (!d.kind) return note(d.type === 'VANILLA' ? `<h3>A Vanilla server cannot load plugins</h3>
+      <p>Plugins need a server type that supports them. Paper is the most used one: it runs the same world and lets you add plugins. Switching restarts the server, and the next start takes a few minutes longer while Paper is downloaded.</p>
+      <div class="end" style="justify-content:flex-start"><button class="btn primary" type="button" data-g="ppaper">Switch to Paper</button><button class="btn" type="button" data-g="psettings">Open Settings</button></div>`
+    : `<p style="margin:0">Server type ${esc(d.type)} fetches its plugins and mods in its own way, so they are not listed here. The Files tab shows what is installed.</p>`);
+  const one = d.kind === 'mod' ? 'mod' : 'plugin';
+  const day = t => new Date(t * 1000).toLocaleDateString(undefined, { dateStyle: 'medium' });
+  const row = (p, i) => `<div class="frow" style="flex-wrap:wrap"><div class="grow" style="min-width:150px"><div class="fname"><b>${esc(p.name)}</b></div><div class="hdesc">${bytes(p.size)} · added ${day(p.mtime)}</div></div>
+    <span class="tag">${p.enabled ? 'Enabled' : 'Disabled'}</span>${btn('ptoggle', p.enabled ? 'Disable' : 'Enable', '', `data-i="${i}"`)}${p.config ? btn('pconfig', 'Config', '', `data-i="${i}"`) : ''}${btn('pdel', 'Delete', 'danger', `data-i="${i}"`)}</div>`;
+  box.innerHTML = `${P.dirty ? `<div class="banner"><div class="grow"><b>Restart the server to apply your changes.</b> <span class="pnote">${word} are loaded when the server starts.</span></div><button class="btn primary" type="button" data-g="prestart">Restart now</button></div>` : ''}
+    <div class="gwrap"><section class="panel" style="flex:999 1 480px">
+      <div class="frow" style="border:0;padding-top:0;flex-wrap:wrap"><div class="grow"><b>Installed</b> <span class="fmeta">${d.items.length} · ${esc(d.dir)}</span></div>
+        ${btn('pupload', 'Upload .jar')}${btn('pfolder', 'Open folder')}${btn('preload', 'Refresh')}</div>
+      ${d.items.map(row).join('') || `<div class="frow"><span class="pnote">No ${low} installed yet. Find one on the right, or upload a .jar file.</span></div>`}
+    </section><section class="panel" style="flex:1 1 320px">
+      <h3>Find ${low}</h3><p>From Modrinth. Only ${low} that fit this server (${esc(d.type[0] + d.type.slice(1).toLowerCase())}${d.version ? ' ' + esc(d.version) : ''}) are shown.</p>
+      <div class="field"><input id="pq" type="search" value="${esc(P.q)}" placeholder="Search ${low}…" aria-label="Search ${low}"></div>
+      <div id="phits"></div></section></div>`;
+  $('#pq').oninput = e => { P.q = e.target.value; clearTimeout(P.t); P.t = setTimeout(loadHits, 400); };
+  renderHits();
+  if (!P.hits && !P.herr) loadHits();
+}
+
+// Buttons on the Console and Plugins tabs.
+async function gameAct(act, el) {
+  const g = mguest(), me = mg; if (!g || !me || !gameOf(g)) return;
+  const c = me.con, P = me.plug, name = (el.closest('[data-n]') || {}).dataset?.n, item = P.data && P.data.items[el.dataset.i];
+  const post = body => api(`guests/lxc/${g.vmid}/game/plugins`, body);
+  // Runs a command about one player, shows the server's answer, and fetches the player list again.
+  const player = async cmd => {
+    try { toast((await gameCmd(g, cmd)).split('\n')[0] || 'Done'); } catch (x) { toast(x.message); }
+    await loadPlayers(me, g); if (conShown(me)) renderPlayers();
+  };
+  const ask = (title, text, label, action, cmd, danger) => modal(`<h2>${esc(title)}</h2><p>${text}</p>
+    <div class="field"><label>${label}</label><input name="t" maxlength="200" autocomplete="off" autofocus></div><div class="err"></div>
+    <div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn ${danger ? 'danger' : 'primary'}" type="submit">${action}</button></div>`,
+    async v => { const t = v.t.replace(/[\x00-\x1f\x7f]/g, ' ').trim(); if (!danger && !t) throw new Error('Write a message first.'); closeModal(); player(`${cmd} ${name} ${t}`.trim()); });
+  const toFiles = p => { const f = me.files; me.tab = 'files'; f.path = p; f.entries = null; f.err = null; f.edit = null; renderManageBody(); };
+  const changed = () => { P.dirty = true; P.data = null; if (plugShown(me)) renderPlugins(); };
+
+  if (act === 'clear') return void ($('#clog').textContent = '');
+  if (act === 'pmenu') { c.open = c.open === name ? null : name; return renderPlayers(); }
+  if (act === 'pop') return player(`op ${name}`);
+  if (act === 'pdeop') return player(`deop ${name}`);
+  if (act === 'pmode') { const mode = el.value; el.value = ''; return player(`gamemode ${mode} ${name}`); }
+  if (act === 'pmsg') return ask(`Message to ${name}`, 'Only this player sees the message.', 'Message', 'Send', 'tell');
+  if (act === 'pkick') return ask(`Kick ${name}?`, 'The player is disconnected, and can join again right away.', 'Reason (optional)', 'Kick', 'kick', true);
+  if (act === 'pban') return ask(`Ban ${name}?`, 'The player is disconnected and cannot join again until you remove them from the ban list.', 'Reason (optional)', 'Ban', 'ban', true);
+  if (act === 'plist') return listDialog(g, el.dataset.k);
+
+  if (act === 'preload') { P.data = null; P.err = null; return renderPlugins(); }
+  if (act === 'psettings') { me.tab = 'game'; return renderManageBody(); }
+  if (act === 'prestart') { P.dirty = false; renderPlugins(); return doAction(g, 'reboot'); }
+  if (act === 'ppaper') return modal(`<h2>Switch to Paper?</h2><p>The server restarts as a Paper server and players are disconnected for a few minutes. Your world and settings are kept. You can switch back under Settings.</p>
+    <div class="err"></div><div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit" autofocus>Switch and restart</button></div>`,
+    async () => {
+      if (!me.s) throw new Error('The settings are still loading. Try again in a moment.');
+      await api(`guests/lxc/${g.vmid}/app`, { env: { ...Object.fromEntries(me.s.env), TYPE: 'PAPER' } });
+      closeModal(); P.data = null; await loadManage(); doAction(g, 'reboot');
+    });
+  if (!P.data) return;
+  if (act === 'pfolder') return toFiles(P.data.dir);
+  if (act === 'pupload') {
+    const file = await pickFile('.jar'); if (!file) return;
+    if (!/\.jar$/i.test(file.name)) return toast('Choose a .jar file.');
+    const dup = P.data.items.some(x => x.file === file.name);
+    if (dup && !confirm(`${file.name} is already installed. Replace it?`)) return;
+    toast(`Uploading ${file.name}…`);
+    try { await uploadTo(g, P.data.dir, file, dup); toast(`${file.name} uploaded`); changed(); } catch (x) { toast(x.message); }
+    return;
+  }
+  if (act === 'pinstall') {
+    const h = P.hits && P.hits[el.dataset.i]; if (!h) return;
+    el.disabled = true; el.textContent = 'Installing…';
+    try {
+      const r = await post({ op: 'install', id: h.id });
+      toast(`${h.title} ${r.version} installed` + (r.needs ? `. It needs ${r.needs} other ${r.needs > 1 ? 'plugins or mods' : 'plugin or mod'} to work; its page on Modrinth lists them.` : ''));
+      changed();
+    } catch (x) { toast(x.message); if (el.isConnected) { el.disabled = false; el.textContent = 'Install'; } }
+    return;
+  }
+  if (!item) return;
+  if (act === 'pconfig') return toFiles(item.config);
+  if (act === 'ptoggle') { el.disabled = true; try { await post({ op: 'toggle', file: item.file }); changed(); } catch (x) { toast(x.message); el.disabled = false; } return; }
+  if (act === 'pdel') return modal(`<h2>Delete ${esc(item.name)}?</h2><p>The file ${esc(item.file)} is removed from the server. Its settings folder is kept.</p>
+    <div class="err"></div><div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn danger" type="submit" autofocus>Delete</button></div>`,
+    async () => { await post({ op: 'delete', file: item.file }); closeModal(); changed(); });
+}
+$('#mbody').addEventListener('click', e => { const b = e.target.closest('button[data-g]'); if (b) gameAct(b.dataset.g, b); });
+$('#mbody').addEventListener('change', e => { const s = e.target.closest('select[data-g]'); if (s && s.value) gameAct(s.dataset.g, s); });
+
+// ----- Settings tab of a Minecraft server -----
+// Each field is one setting of the server image (an environment variable). The image writes them into
+// server.properties at every start. Only fields you change are saved; the rest stay as they are.
+const MC_FORM = [
+  ['Server', [
+    { k: 'MOTD', label: 'Server name, shown in the game\'s server list', wide: 1, ph: 'A Minecraft Server' },
+    { k: 'MAX_PLAYERS', label: 'Max players', num: [1, 10000], def: '20' },
+    { k: 'SERVER_PORT', label: 'Port', num: [1, 65535], def: '25565' },
+    { k: 'MODE', label: 'Game mode', def: 'survival', opts: { survival: 'Survival', creative: 'Creative', adventure: 'Adventure', spectator: 'Spectator' } },
+    { k: 'DIFFICULTY', label: 'Difficulty', def: 'easy', opts: { peaceful: 'Peaceful', easy: 'Easy', normal: 'Normal', hard: 'Hard' } },
+  ]],
+  ['Rules', [
+    { k: 'PVP', bool: 1, def: 'true', label: 'Players can fight each other (PvP)' },
+    { k: 'ENABLE_WHITELIST', bool: 1, def: 'false', label: 'Only players on the whitelist can join' },
+    { k: 'ONLINE_MODE', bool: 1, def: 'true', label: 'Check that players own Minecraft (online mode)' },
+    { k: 'HARDCORE', bool: 1, def: 'false', label: 'Hardcore: a player who dies cannot play on' },
+    { k: 'ENABLE_COMMAND_BLOCK', bool: 1, def: 'false', label: 'Allow command blocks' },
+  ]],
+  ['Version', [
+    { k: 'TYPE', label: 'Server type', def: 'VANILLA', opts: { VANILLA: 'Vanilla', PAPER: 'Paper (plugins)', PURPUR: 'Purpur (plugins)', FABRIC: 'Fabric (mods)', FORGE: 'Forge (mods)', NEOFORGE: 'NeoForge (mods)' } },
+    { k: 'VERSION', label: 'Minecraft version', def: 'LATEST', ph: 'LATEST' },
+    { k: 'MEMORY', label: 'Java memory', def: '1G', ph: '1G', wide: 1, hint: s => `The container has ${s.memory} MB. Leave some of it free for the rest of the system.` },
+  ]],
+  ['World', [
+    { k: 'SEED', label: 'Seed, used when a new world is made', ph: 'Random' },
+    { k: 'VIEW_DISTANCE', label: 'View distance in chunks', num: [2, 32], def: '10' },
+  ]],
+  ['EULA', [
+    { k: 'EULA', bool: 1, def: 'false', label: 'I accept the <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener" style="color:var(--accent)">Minecraft EULA</a>. The server does not start without it.' },
+  ]],
+];
+function gameForm(g, s) {
+  const env = new Map(s.env), keys = MC_FORM.flatMap(x => x[1]).map(f => f.k), rest = s.env.filter(([k]) => !keys.includes(k));
+  const field = f => {
+    const cur = env.get(f.k) ?? f.def ?? '', id = 'g_' + f.k;
+    if (f.bool) return `<label class="check"><input type="checkbox" name="env:${f.k}" ${/^true$/i.test(cur) ? 'checked' : ''}> <span>${f.label}</span></label>`;
+    let input;
+    if (f.opts) {
+      const sel = Object.keys(f.opts).find(o => o.toLowerCase() === cur.toLowerCase()) ?? cur;   // a value set by hand stays selectable
+      input = `<select id="${id}" name="env:${f.k}">${[...new Set([...Object.keys(f.opts), sel])].map(o => `<option value="${esc(o)}" ${o === sel ? 'selected' : ''}>${esc(f.opts[o] || o)}</option>`).join('')}</select>`;
+    } else input = `<input id="${id}" name="env:${f.k}" value="${esc(cur)}" autocomplete="off" ${f.num ? `type="number" min="${f.num[0]}" max="${f.num[1]}"` : ''} ${f.ph ? `placeholder="${esc(f.ph)}"` : ''}>`;
+    return `<div class="field ${f.wide ? 'wide' : ''}"><label for="${id}">${f.label}</label>${input}${f.hint ? `<small>${esc(f.hint(s))}</small>` : ''}</div>`;
+  };
+  return `${MC_FORM.map(([title, fields]) => `<h3>${title}</h3><div class="gform">${fields.map(field).join('')}</div>`).join('')}
+    <details class="adv" style="margin-top:8px"><summary>All other settings (environment variables)</summary>
+      <div class="field"><label for="g_extra">One KEY=value per line</label>
+        <textarea id="g_extra" name="extra" spellcheck="false" style="min-height:${Math.min(320, 60 + rest.length * 19)}px">${esc(rest.map(([k, val]) => k + '=' + val).join('\n'))}</textarea></div></details>
+    <p>The server reads these when it starts, and they replace the same lines in server.properties.</p>
+    ${g.status === 'running' ? '<label class="check"><input type="checkbox" name="restart" checked> Restart the server after saving, so the changes take effect. Players are disconnected for a moment.</label>' : ''}`;
+}
+async function saveGame(g, v) {
+  // The variables keep their order, so saving without a change is not mistaken for one.
+  const fields = MC_FORM.flatMap(x => x[1]), keys = fields.map(f => f.k), env = new Map(mg.s.env), extra = new Map();
+  for (const line of v.extra.split('\n').map(l => l.trim()).filter(Boolean)) {
+    const m = /^(\w+)=(.*)$/.exec(line); if (!m) throw new Error(`"${line}" is not in the form KEY=value`);
+    if (keys.includes(m[1])) throw new Error(`${m[1]} has its own field above. Change it there.`);
+    extra.set(m[1], m[2]);
+  }
+  for (const k of [...env.keys()]) if (!keys.includes(k) && !extra.has(k)) env.delete(k);
+  for (const [k, val] of extra) env.set(k, val);
+  for (const f of fields) {
+    const val = f.bool ? ('env:' + f.k in v ? 'TRUE' : 'FALSE') : String(v['env:' + f.k] ?? '').trim(), old = env.get(f.k) ?? f.def ?? '';
+    if (val.toLowerCase() === old.toLowerCase()) continue;   // not changed: leave it exactly as it is, set or not
+    if (val === '') env.delete(f.k); else env.set(f.k, val);
+  }
+  const r = await api(`guests/lxc/${g.vmid}/app`, { env: Object.fromEntries(env) });
+  const restart = r.envChanged && 'restart' in v;
+  toast(`${g.name}: ${r.envChanged ? 'settings saved' : 'nothing changed'}${restart ? ', restarting' : r.envChanged ? '. Restart the server to use them' : ''}`);
+  mg.plug.data = null;
+  await loadManage();
+  if (restart) doAction(g, 'reboot'); else refresh();
+}
 
 function containerForm(g, s) {
   const lxc = g.type === 'lxc', on = g.status === 'running';
