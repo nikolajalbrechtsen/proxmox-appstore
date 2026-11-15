@@ -1,5 +1,12 @@
 [
   {
+    "version": "1.13",
+    "date": "2026-11-15",
+    "changes": [
+      { "type": "improved", "text": "When an app stops because its container got no network address, the Activity page now says so, with the reason Proxmox gave (DHCP failing at container start). Installing with a static IP address under Advanced options avoids DHCP altogether." }
+    ]
+  },
+  {
     "version": "1.12",
     "date": "2026-11-15",
     "changes": [

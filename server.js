@@ -59,7 +59,11 @@ async function waitTask(upid, timeoutMs = 20 * 60 * 1000, onLog) {
     const s = await pve('GET', base + '/status');
     if (onLog) { try { const l = await pve('GET', base + '/log', { start: 0, limit: 500 }); if (l.length) onLog(l[l.length - 1].t); } catch {} }
     if (s.status === 'stopped') {
-      if (s.exitstatus === 'OK' || /^WARNINGS/.test(s.exitstatus || '')) return;
+      // Success; a task that ended with warnings returns them (DHCP failing at container start is one).
+      if (s.exitstatus === 'OK') return [];
+      if (/^WARNINGS/.test(s.exitstatus || '')) {
+        try { return (await pve('GET', base + '/log', { start: 0, limit: 500 })).map(l => l.t).filter(t => /^WARN|failed/i.test(t) && !/^TASK/.test(t)); } catch { return []; }
+      }
       let tail = '';
       try { tail = (await pve('GET', base + '/log', { start: 0, limit: 500 })).map(l => l.t).filter(t => !/^TASK/.test(t)).slice(-3).join(' | '); } catch {}
       throw new Error(`Task failed: ${s.exitstatus}${tail ? ' - ' + tail : ''}`);
@@ -248,8 +252,12 @@ async function runInstall(job) {
   if (!job.opt.start) { cache.clear(); return; }
 
   // Starts the container and watches it until it has a network address. Returns why it failed, or null.
+  // Proxmox does DHCP for these containers from the host when they start; when that fails, the start task
+  // only warns. Those warnings are kept, since an app that needs the network cannot run without it.
+  const warnings = new Set();
   const boot = async () => {
-    try { await waitTask(await pve('POST', base + '/status/start'), 3 * 60 * 1000); } catch (e) { return 'Proxmox could not start the container: ' + e.message; }
+    try { for (const w of await waitTask(await pve('POST', base + '/status/start'), 3 * 60 * 1000)) warnings.add(w.replace(/^WARN:\s*/, '')); }
+    catch (e) { return 'Proxmox could not start the container: ' + e.message; }
     step('Waiting for network address');
     for (let i = 0; i < 30; i++) {
       await sleep(2000);
@@ -277,8 +285,14 @@ async function runInstall(job) {
     }
   }
   cache.clear();
-  if (failed) throw new Error((failed === 'stopped' ? 'The container was created, but the app in it stopped right after starting.' : failed)
-    + (job.detail ? ' The last lines it printed are shown below.' : ' This image may not work as a Proxmox container. Set up the file browser to see what the app prints when this happens.'));
+  // Without an address the app had no network, which is the cause rather than the app itself.
+  const noNet = !job.ip && job.opt.ip === 'dhcp'
+    ? ` The container got no network address: Proxmox's DHCP for it did not work${warnings.size ? ' (' + [...warnings].join('; ') + ')' : ''}.`
+      + ' Update Proxmox (apt update && apt full-upgrade on the host), or install again with a static IP address under Advanced options.'
+    : '';
+  if (noNet) job.detail = [...warnings, job.detail].filter(Boolean).join('\n') || job.detail;
+  if (failed) throw new Error((failed === 'stopped' ? 'The container was created, but the app in it stopped right after starting.' : failed) + noNet
+    + (job.detail ? ' The last lines it printed are shown below.' : noNet ? '' : ' This image may not work as a Proxmox container. Set up the file browser to see what the app prints when this happens.'));
   // A few seconds more: an app that cannot run at all has usually given up by now.
   await sleep(6000);
   if ((await pve('GET', base + '/status/current')).status !== 'running') {
