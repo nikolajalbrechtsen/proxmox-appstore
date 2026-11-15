@@ -87,6 +87,8 @@ const firstIp = list => {
   }
   return null;
 };
+// Link for the Open button. Apps marked "https" in the catalog only answer on https.
+const appUrl = (ip, a) => `${a.https ? 'https' : 'http'}://${ip}${a.port == (a.https ? 443 : 80) ? '' : ':' + a.port}${a.path || ''}`;
 async function guestIp(g) {
   if (g.status !== 'running') return null;
   if (g.type === 'lxc') return cached('ip' + g.vmid, 15000, async () => firstIp(await pve('GET', `${node()}/lxc/${g.vmid}/interfaces`)));
@@ -105,13 +107,13 @@ async function listGuests() {
     ]);
     const app = apps[g.vmid];
     let url = null;
-    if (app && ip && app.port) url = `http://${ip}${app.port == 80 ? '' : ':' + app.port}${app.path || ''}`;
+    if (app && ip && app.port) url = appUrl(ip, app);
     else if (cfg && cfg.description) { const m = /https?:\/\/[^\s"'<>]+/.exec(cfg.description); if (m && !/community-scripts|github|shields\.io/.test(m[0])) url = m[0]; }
     return {
       vmid: g.vmid, name: g.name, type: g.type, status: g.status, cpu: g.cpu || 0, maxcpu: g.maxcpu,
       mem: g.mem || 0, maxmem: g.maxmem, disk: g.disk || 0, maxdisk: g.maxdisk, uptime: g.uptime || 0,
       tags: g.tags ? g.tags.split(/[;, ]+/).filter(Boolean) : [], ip, url,
-      app: app ? app.appId : null, self: !!ip && mine.includes(ip), onboot: !!(cfg && cfg.onboot),
+      app: app ? app.appId : null, image: app ? app.image : null, self: !!ip && mine.includes(ip), onboot: !!(cfg && cfg.onboot),
     };
   }));
   guests.sort((a, b) => a.vmid - b.vmid);
@@ -165,7 +167,7 @@ function queueInstall(body) {
     if (String(v) !== '') env[k] = String(v);
   }
   const job = {
-    id: ++jobSeq, appId: app.id, appName: app.name, hostname, image, env, port: app.port, path: app.path || '', opt,
+    id: ++jobSeq, appId: app.id, appName: app.name, hostname, image, env, port: app.port, path: app.path || '', https: !!app.https, opt,
     cores: num(body.cores, app.cores || 1, 1, 64), memory: num(body.memory, app.memory || 512, 64, 262144),
     disk: num(body.disk, app.disk || 4, 1, 2000),
     status: 'queued', step: 'Waiting in queue', log: [], started: Date.now(), vmid: null, ip: null, url: null, error: null,
@@ -215,7 +217,7 @@ async function runInstall(job) {
     // Remove the downloaded image so the next install always pulls a fresh copy.
     pve('DELETE', `${tmplDir}/content/${encodeURIComponent(tmpl.volid)}`).catch(() => {});
   }
-  apps[job.vmid] = { appId: job.appId, name: job.appName, port: job.port, path: job.path, image: job.image };
+  apps[job.vmid] = { appId: job.appId, name: job.appName, port: job.port, path: job.path, https: job.https, image: job.image };
   writeJson(APPS_FILE, apps);
 
   if (Object.keys(job.env).length) {
@@ -234,7 +236,7 @@ async function runInstall(job) {
     await sleep(2000);
     job.ip = firstIp(await pve('GET', `${node()}/lxc/${job.vmid}/interfaces`).catch(() => []));
     // Apps without a web UI (port 0) get no Open link.
-    if (job.ip && job.port) job.url = `http://${job.ip}${job.port == 80 ? '' : ':' + job.port}${job.path}`;
+    if (job.ip && job.port) job.url = appUrl(job.ip, job);
   }
   const st = await pve('GET', `${node()}/lxc/${job.vmid}/status/current`);
   if (st.status !== 'running') throw new Error('The container was created but stopped right after starting. This image may not be compatible with LXC.');
@@ -259,6 +261,31 @@ async function guestAction(type, vmid, action) {
   } else throw new Error('Unknown action');
   await waitTask(upid, 90000).catch(e => { if (!/timed out/.test(e.message)) throw e; });
   cache.clear();
+}
+
+// ---------- guest settings (Manage dialog) ----------
+// Without a body: returns the current settings. With one: applies the values that changed.
+async function guestSettings(type, vmid, b) {
+  const data = await listGuests();
+  const g = data.guests.find(x => String(x.vmid) === vmid && x.type === type);
+  if (!g) throw new Error('Guest not found');
+  const base = `${node()}/${type}/${vmid}`, cfg = await pve('GET', base + '/config');
+  const sockets = type === 'qemu' ? Number(cfg.sockets) || 1 : 1;
+  const cur = {
+    cores: cfg.cores ? cfg.cores * sockets : g.maxcpu,   // a container without a limit uses every host core
+    memory: Number((/\d+/.exec(String(cfg.memory ?? '')) || [512])[0]),
+    onboot: !!Number(cfg.onboot),
+  };
+  if (!b) return cur;
+  if (g.self) throw new Error('This is the App Store itself - manage it from the Proxmox UI.');
+  const int = (v, min, max, what) => { const n = Number(v); if (!(Number.isInteger(n) && n >= min && n <= max)) throw new Error(`${what} must be a whole number from ${min} to ${max}`); return n; };
+  const cores = int(b.cores, 1, data.host.maxcpu || 64, 'CPU cores'), memory = int(b.memory, 64, 262144, 'Memory');
+  const set = {};
+  if (cores !== cur.cores) { set.cores = cores; if (sockets > 1) set.sockets = 1; }
+  if (memory !== cur.memory) set.memory = memory;
+  if (!!b.onboot !== cur.onboot) set.onboot = b.onboot ? 1 : 0;
+  if (Object.keys(set).length) { await pve('PUT', base + '/config', set); cache.clear(); }
+  return { ok: true, changed: Object.keys(set).length };
 }
 
 // ---------- setup / auth ----------
@@ -334,6 +361,9 @@ async function api(req, res, url) {
   if (p === '/api/install' && M === 'POST') return send(res, 200, queueInstall(await readBody(req)));
   const m = /^\/api\/guests\/(lxc|qemu)\/(\d+)\/(start|stop|shutdown|reboot|delete)$/.exec(p);
   if (m && M === 'POST') { await readBody(req); await guestAction(m[1], m[2], m[3]); return send(res, 200, { ok: true }); }
+  const c = /^\/api\/guests\/(lxc|qemu)\/(\d+)\/config$/.exec(p);
+  if (c && M === 'GET') return send(res, 200, await guestSettings(c[1], c[2]));
+  if (c && M === 'POST') return send(res, 200, await guestSettings(c[1], c[2], await readBody(req)));
   send(res, 404, { error: 'Not found' });
 }
 

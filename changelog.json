@@ -1,5 +1,12 @@
 [
   {
+    "version": "1.6",
+    "date": "2026-11-15",
+    "changes": [
+      { "type": "new", "text": "Manage button on every installed app and virtual machine: see its address, image and disk use, and change CPU cores, memory and start-on-boot." }
+    ]
+  },
+  {
     "version": "1.5",
     "date": "2026-11-15",
     "changes": [

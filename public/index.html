@@ -258,7 +258,7 @@ function renderOverview() {
       ${g.tags.length || g.self ? `<div class="tags">${g.self ? '<span class="tag">this app store</span>' : ''}${g.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
       <div class="actions">
         ${g.url && on ? `<a class="btn sm primary" href="${esc(g.url)}" target="_blank" rel="noopener">Open</a>` : ''}
-        ${on ? a('reboot', 'Restart') + a('shutdown', 'Stop') : a('start', 'Start') + a('delete', 'Delete', 'danger')}
+        ${on ? a('reboot', 'Restart') + a('shutdown', 'Stop') : a('start', 'Start')}${a('manage', 'Manage')}${on ? '' : a('delete', 'Delete', 'danger')}
       </div></div>`;
   };
   // Apps (containers) first, then virtual machines, each under its own heading.
@@ -273,6 +273,7 @@ $('#guests').onclick = e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const g = data.guests.find(x => x.vmid == b.dataset.id), act = b.dataset.act;
   if (act === 'start') return doAction(g, act);
+  if (act === 'manage') return manageDialog(g);
   if (act === 'delete') return modal(`<h2>Delete ${esc(g.name)}?</h2>
     <p>This permanently destroys ${g.type === 'lxc' ? 'container' : 'virtual machine'} ${g.vmid} and all of its data. This cannot be undone.</p>
     <div class="field"><label>Type <b>${esc(g.name)}</b> to confirm</label><input name="c" autocomplete="off" autofocus></div><div class="err"></div>
@@ -287,6 +288,32 @@ async function doAction(g, act) {
   try { await api(`guests/${g.type}/${g.vmid}/${act}`, {}); toast(`${g.name}: ${{ start: 'started', shutdown: 'stopped', reboot: 'restarted', delete: 'deleted' }[act]}`); }
   catch (e) { toast(e.message); }
   delete busy[g.vmid]; await refresh();
+}
+// Popup with details and editable settings for one installed app or VM.
+async function manageDialog(g) {
+  let s; try { s = await api(`guests/${g.type}/${g.vmid}/config`); } catch (e) { return toast(e.message); }
+  const on = g.status === 'running', vm = g.type === 'qemu';
+  const cat = catalog.find(a => a.id === g.app) || catalog.find(a => g.name.includes(a.id));
+  modal(`<div class="row" style="margin-bottom:14px">${icon(cat ? cat.icon : g.name.replace(/[^a-z0-9-]/g, ''), g.name)}
+      <div class="grow"><h2>Manage ${esc(g.name)}</h2><div class="sub">${vm ? 'Virtual machine' : 'Container'} ${g.vmid}${cat ? ' · ' + esc(cat.name) : ''}</div></div></div>
+    <dl class="info">
+      <dt>Status</dt><dd>${on ? 'Running · up ' + upt(g.uptime) : 'Stopped'}</dd>
+      ${g.ip ? `<dt>Address</dt><dd>${g.url ? `<a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.ip)}</a>` : esc(g.ip)}</dd>` : ''}
+      ${g.image ? `<dt>Docker image</dt><dd><code>${esc(g.image)}</code></dd>` : ''}
+      ${g.maxdisk ? `<dt>Disk</dt><dd>${vm ? bytes(g.maxdisk) : bytes(g.disk) + ' of ' + bytes(g.maxdisk) + ' used'}</dd>` : ''}
+    </dl>
+    <div class="two">
+      <div class="field"><label>CPU cores</label><input name="cores" type="number" min="1" max="${data.host.maxcpu || 64}" value="${s.cores}" required></div>
+      <div class="field"><label>Memory (MB)</label><input name="memory" type="number" min="64" step="64" value="${s.memory}" required></div>
+    </div>
+    <label class="check"><input type="checkbox" name="onboot" ${s.onboot ? 'checked' : ''}> Start automatically when the Proxmox host boots</label>
+    ${vm && on ? '<p>CPU and memory changes to a running virtual machine take effect after its next restart.</p>' : ''}
+    <div class="err"></div>
+    <div class="end"><button class="btn" type="button" data-close>Close</button><button class="btn primary" type="submit">Save</button></div>`,
+    async v => {
+      const r = await api(`guests/${g.type}/${g.vmid}/config`, { cores: v.cores, memory: v.memory, onboot: 'onboot' in v });
+      closeModal(); toast(`${g.name}: ${r.changed ? 'settings saved' : 'nothing changed'}`); refresh();
+    });
 }
 $('#gq').oninput = $('#gf').onchange = renderOverview;
 
@@ -329,7 +356,7 @@ function showApp(id) {
     <p style="margin-top:14px;color:var(--text)">${esc(a.desc)}</p>
     <dl class="info">
       <dt>Docker image</dt><dd><code>${esc(a.image)}</code></dd>
-      <dt>Web page</dt><dd>${a.port ? 'Port ' + a.port + esc(a.path || '') + ', opened with the Open button' : 'None – this app has no web page'}</dd>
+      <dt>Web page</dt><dd>${a.port ? 'Port ' + a.port + esc(a.path || '') + (a.https ? ' over HTTPS. Your browser will warn about the self-signed certificate the first time' : '') + ', opened with the Open button' : 'None – this app has no web page'}</dd>
       <dt>Default size</dt><dd>${resources(a)}</dd>
       ${(a.env || []).length ? `<dt>Settings</dt><dd>${a.env.map(v => esc(v.label || v.key)).join('<br>')}</dd>` : ''}
       ${a.repo ? `<dt>Source</dt><dd><a href="https://github.com/${esc(a.repo)}" target="_blank" rel="noopener">github.com/${esc(a.repo)}</a></dd>` : ''}
