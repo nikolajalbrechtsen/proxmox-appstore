@@ -121,6 +121,16 @@ details.adv[open] summary{margin-bottom:6px}
 .panel p{color:var(--muted);margin:0 0 12px;font-size:13px}
 .panel .info{margin-top:0}
 @media (max-width:560px){.three{grid-template-columns:1fr 1fr}}
+.frow{display:flex;align-items:center;gap:10px;padding:6px 2px;border-top:1px solid var(--line);min-width:0}
+.fico{width:14px;flex:none;color:var(--muted);text-align:center}
+.flink{background:none;border:0;padding:2px 0;cursor:pointer;text-align:left;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.flink:hover{color:var(--accent)}
+.fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.fmeta{color:var(--muted);font-size:12.5px;white-space:nowrap;flex:none;max-width:30%;overflow:hidden;text-overflow:ellipsis}
+.crumbs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.crumbs .flink{flex:none;max-width:100%}
+#fedit{display:block;width:100%;height:60vh;min-height:240px;resize:vertical;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:12.5px/1.5 ui-monospace,Consolas,monospace;tab-size:4;white-space:pre;overflow:auto}
+@media (max-width:700px){.fhide{display:none}}
 .app p.notes{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
 .app a.name{color:inherit;text-decoration:none;display:block}
 .app a.name:hover{text-decoration:underline}
@@ -336,7 +346,7 @@ $('#gq').oninput = $('#gf').onchange = renderOverview;
 let mg = null;   // { type, vmid, tab, s: settings, err }
 const mguest = () => mg && data && data.guests.find(x => x.vmid == mg.vmid && x.type === mg.type);
 async function openManage(g) {
-  mg = { type: g.type, vmid: g.vmid, tab: 'container', s: null, err: null };
+  mg = { type: g.type, vmid: g.vmid, tab: 'container', s: null, err: null, files: { path: '/', entries: null, err: null, edit: null, status: null, checked: false } };
   show('manage');
   await loadManage();
 }
@@ -368,8 +378,9 @@ function renderManageHead() {
 function renderManageBody() {
   const g = mguest(); if (!g) return;
   const lxc = g.type === 'lxc', s = mg.s;
-  $('#mtabs').innerHTML = [['container', lxc ? 'Container settings' : 'Settings'], ...(lxc ? [['app', 'App settings']] : [])]
+  $('#mtabs').innerHTML = [['container', lxc ? 'Container settings' : 'Settings'], ...(lxc ? [['files', 'Files'], ['app', 'App settings']] : [])]
     .map(([k, l]) => `<button type="button" data-mtab="${k}" class="${mg.tab === k ? 'on' : ''}">${l}</button>`).join('');
+  if (mg.tab === 'files') return renderFiles();
   if (!s) { $('#mbody').innerHTML = `<div class="empty">${mg.err ? esc(mg.err) : 'Loading…'}</div>`; return; }
   $('#mbody').innerHTML = `<form class="panel">${mg.tab === 'app' ? appForm(g, s) : containerForm(g, s)}
     ${g.self ? '<p>This is the App Store itself. Change its settings in the Proxmox UI.</p>' : ''}
@@ -385,6 +396,136 @@ function renderManageBody() {
   };
 }
 $('#mtabs').onclick = e => { const b = e.target.closest('[data-mtab]'); if (b && mg) { mg.tab = b.dataset.mtab; renderManageBody(); } };
+
+// ----- Files tab: browse a running container's files and edit text files -----
+const fjoin = (dir, name) => (dir === '/' ? '' : dir) + '/' + name;
+const fq = (g, what, p) => `guests/lxc/${g.vmid}/${what}?path=${encodeURIComponent(p)}`;
+// True while the Files tab of this same app is still what is on screen (answers can arrive late).
+const filesShown = me => mg === me && mg.tab === 'files' && tab === 'manage';
+function renderFiles() {
+  const g = mguest(), f = mg.files, box = $('#mbody'), me = mg;
+  const note = (text, btn) => { box.innerHTML = `<div class="panel"><p style="margin:0">${text}</p>${btn ? `<div class="end" style="justify-content:flex-start;margin-top:12px"><button class="btn" type="button" data-f="refresh">${btn}</button></div>` : ''}</div>`; };
+  if (g.self) return note('This is the App Store itself. Its files are not shown here.');
+  if (!f.status) {
+    box.innerHTML = '<div class="empty">Loading…</div>';
+    return api('files/status').then(s => { f.status = s; }, e => { f.status = { connected: false, error: e.message }; }).then(() => { if (filesShown(me)) renderFiles(); });
+  }
+  if (!f.status.connected) {
+    const st = f.status;
+    box.innerHTML = `<div class="panel"><h3>Set up the file browser</h3>
+      ${st.command ? `<p>The App Store's Proxmox token cannot read files inside a container, so the file browser goes through the Proxmox host. This is set up once.</p>
+        <p>Open the <b>host's</b> shell (select your node in Proxmox → Shell), paste this command and press Enter. It installs a small helper script and an SSH key that can only run that helper. After that, the App Store can read and change files in every running, unprivileged container.</p>
+        <pre id="fcmd" style="max-height:170px">${esc(st.command)}</pre>` : ''}
+      ${st.error && (f.checked || !st.command) ? `<div class="err">${esc(st.error)}</div>` : ''}
+      <div class="end" style="justify-content:flex-start">${st.command ? '<button class="btn primary" type="button" data-f="copy">Copy command</button>' : ''}<button class="btn" type="button" data-f="recheck">I have run it – check</button></div></div>`;
+    return;
+  }
+  if (g.status !== 'running') return note('Start the app to browse its files.', 'Check again');
+  if (f.edit) return renderEditor();
+  if (f.err) return note(esc(f.err), 'Try again');
+  if (!f.entries) { box.innerHTML = '<div class="empty">Loading…</div>'; return loadDir(f.path); }
+  const parts = f.path.split('/').filter(Boolean);
+  const crumbs = [`<button class="flink" type="button" data-f="cd" data-p="/">/</button>`, ...parts.map((s, i) => `<button class="flink" type="button" data-f="cd" data-p="${esc('/' + parts.slice(0, i + 1).join('/'))}">${esc(s)}</button>`)].join('<span class="fmeta">›</span>');
+  const day = t => new Date(t * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  const row = (e, i) => {
+    const dir = e.type === 'd' || e.target === 'd', file = e.type === 'f' || e.target === 'f';
+    return `<div class="frow"><span class="fico">${dir ? '▸' : e.type === 'l' ? '↪' : ''}</span>
+      ${dir || file ? `<button class="flink grow" type="button" data-f="${dir ? 'enter' : 'open'}" data-i="${i}">${esc(e.name)}${dir ? '/' : ''}</button>` : `<span class="grow fname">${esc(e.name)}</span>`}
+      ${e.type === 'l' ? `<span class="fmeta fhide">→ ${esc(e.link || '')}</span>` : ''}
+      <span class="fmeta fhide">${dir ? '' : bytes(e.size)}</span><span class="fmeta fhide">${day(e.mtime)}</span>
+      ${file ? `<a class="btn sm" href="/api/${fq(g, 'download', fjoin(f.path, e.name))}" download title="Download">↓</a>` : ''}
+      <button class="btn sm" type="button" data-f="rename" data-i="${i}">Rename</button><button class="btn sm danger" type="button" data-f="delete" data-i="${i}">Delete</button></div>`;
+  };
+  box.innerHTML = `<div class="panel" style="max-width:none">
+    <div class="frow" style="border:0;padding-top:0;flex-wrap:wrap"><div class="grow crumbs">${crumbs}</div>
+      <button class="btn sm" type="button" data-f="newfile">New file</button><button class="btn sm" type="button" data-f="newdir">New folder</button><button class="btn sm" type="button" data-f="refresh">Refresh</button></div>
+    ${f.path !== '/' ? `<div class="frow"><span class="fico">▸</span><button class="flink grow" type="button" data-f="cd" data-p="${esc(f.path.replace(/\/[^/]+$/, '') || '/')}">..</button></div>` : ''}
+    ${f.entries.map(row).join('') || '<div class="frow"><span class="fmeta">This folder is empty.</span></div>'}
+    ${f.truncated ? '<div class="frow"><span class="fmeta">Only the first 5000 entries are shown.</span></div>' : ''}</div>`;
+}
+async function loadDir(p) {
+  const me = mg, f = me.files, g = mguest(); if (!g) return;
+  try { const r = await api(fq(g, 'files', p)); f.path = r.path; f.entries = r.entries; f.truncated = r.truncated; f.err = null; }
+  catch (e) { f.entries = null; f.err = e.message; }
+  if (filesShown(me)) renderFiles();
+}
+function renderEditor() {
+  const ed = mg.files.edit;
+  $('#mbody').innerHTML = `<div class="panel" style="max-width:none">
+    <div class="frow" style="border:0;padding-top:0;flex-wrap:wrap"><div class="grow fname"><b>${esc(ed.path)}</b> <span class="fmeta" id="fdirty">${ed.dirty ? '· not saved' : ''}</span></div>
+      <button class="btn sm" type="button" data-f="close">Close</button><button class="btn sm primary" type="button" data-f="save">Save</button></div>
+    <textarea id="fedit" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="File contents"></textarea>
+    <div class="err"></div><p style="margin:8px 0 0">Ctrl+S saves. Many apps read their files only when they start, so restart the app after changing its configuration.</p></div>`;
+  const t = $('#fedit');
+  t.value = ed.text;
+  t.oninput = () => { ed.text = t.value; if (!ed.dirty) { ed.dirty = true; $('#fdirty').textContent = '· not saved'; } };
+  t.onkeydown = e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveFile(); } };
+}
+async function saveFile() {
+  const me = mg, ed = me.files.edit, g = mguest(); if (!ed || !g || ed.saving) return;
+  const err = $('#mbody .err'); if (err) err.textContent = '';
+  ed.saving = true;
+  try {
+    await api(`guests/lxc/${g.vmid}/files`, { op: 'write', path: ed.path, text: ed.text, crlf: ed.crlf });
+    ed.dirty = false; toast(`${ed.path.split('/').pop()} saved`);
+    if (filesShown(me) && me.files.edit === ed) $('#fdirty').textContent = '';
+  } catch (e) { if (filesShown(me) && me.files.edit === ed && err) err.textContent = e.message; else toast(e.message); }
+  ed.saving = false;
+}
+// A small dialog asking for one name, used for new files, new folders and renaming.
+function nameDialog(title, label, value, save) {
+  modal(`<h2>${esc(title)}</h2><div class="field"><label>${esc(label)}</label><input name="name" value="${esc(value)}" maxlength="255" required autocomplete="off" autofocus></div>
+    <div class="err"></div><div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>`,
+    async v => {
+      const name = v.name.trim();
+      if (!name || name === '.' || name === '..' || name.includes('/')) throw new Error('A name cannot be empty or contain "/".');
+      await save(name); closeModal();
+    });
+}
+$('#mbody').addEventListener('click', async e => {
+  const b = e.target.closest('[data-f]'), g = mguest();
+  if (!b || !g || !mg || mg.tab !== 'files') return;
+  const me = mg, f = me.files, act = b.dataset.f, en = f.entries && f.entries[b.dataset.i];
+  const post = body => api(`guests/lxc/${g.vmid}/files`, body);
+  const go = p => { f.entries = null; f.err = null; f.path = p; renderFiles(); };
+  if (act === 'copy') {
+    // The page is served over plain HTTP, where the clipboard API is not available, so copy through a selection.
+    const t = document.createElement('textarea'); t.value = f.status.command; t.style.cssText = 'position:fixed;opacity:0'; document.body.append(t); t.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch {}
+    t.remove(); return toast(ok ? 'Command copied. Paste it in the host shell.' : 'Could not copy. Select the text and copy it yourself.');
+  }
+  if (act === 'recheck') { f.status = null; f.checked = true; return renderFiles(); }
+  if (act === 'refresh') return go(f.path);
+  if (act === 'cd') return go(b.dataset.p);
+  if (act === 'close') { if (f.edit.dirty && !confirm('Close without saving your changes?')) return; f.edit = null; return go(f.path); }
+  if (act === 'save') return saveFile();
+  if (act === 'newfile') return nameDialog('New file', 'File name', '', async name => {
+    await post({ op: 'create', dir: f.path, name, text: '' });
+    f.edit = { path: fjoin(f.path, name), text: '', crlf: false, dirty: false }; if (filesShown(me)) renderFiles();
+  });
+  if (act === 'newdir') return nameDialog('New folder', 'Folder name', '', async name => { await post({ op: 'mkdir', dir: f.path, name }); if (filesShown(me)) go(f.path); });
+  if (!en) return;
+  const p = fjoin(f.path, en.name);
+  if (act === 'enter') return go(p);
+  if (act === 'open') {
+    if (en.size > 1024 * 1024) return toast('This file is too large to open here. Download it instead.');
+    b.disabled = true;
+    try {
+      const r = await api(fq(g, 'file', p));
+      if (r.binary) toast('This is not a text file. Download it instead.');
+      else if (filesShown(me)) { f.edit = { path: p, text: r.text, crlf: r.crlf, dirty: false }; renderFiles(); }
+    } catch (x) { toast(x.message); }
+    b.disabled = false; return;
+  }
+  if (act === 'rename') return nameDialog(`Rename ${en.name}`, 'New name', en.name, async name => { if (name !== en.name) await post({ op: 'rename', path: p, name }); if (filesShown(me)) go(f.path); });
+  if (act === 'delete') {
+    const dir = en.type === 'd';
+    return modal(`<h2>Delete ${esc(en.name)}?</h2><p>${dir ? 'The folder and everything in it are' : 'The file is'} permanently removed from ${esc(g.name)}. This cannot be undone.</p>
+      <div class="err"></div><div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn danger" type="submit" autofocus>Delete</button></div>`,
+      async () => { await post({ op: 'delete', path: p }); closeModal(); if (filesShown(me)) go(f.path); });
+  }
+});
+window.addEventListener('beforeunload', e => { if (mg && mg.files.edit && mg.files.edit.dirty) e.preventDefault(); });
 
 function containerForm(g, s) {
   const lxc = g.type === 'lxc', on = g.status === 'running';
@@ -695,6 +836,8 @@ async function renderChangelog() {
 }
 
 function show(t) {
+  // Leaving the Manage page drops what is open in the file editor.
+  if (tab === 'manage' && t !== 'manage' && mg && mg.files.edit && mg.files.edit.dirty && !confirm('Leave without saving your changes to the file?')) return;
   tab = t;
   for (const s of ['overview', 'manage', 'store', 'shortcuts', 'activity', 'changelog']) $('#' + s).classList.toggle('hidden', s !== t);
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === (t === 'manage' ? 'overview' : t)));

@@ -1,5 +1,12 @@
 [
   {
+    "version": "1.9",
+    "date": "2026-11-15",
+    "changes": [
+      { "type": "new", "text": "File browser on the Manage page: look through a running app's files, edit text files, download, rename, delete, and create files and folders. It needs a one-time setup on the Proxmox host, which the Files tab walks you through." }
+    ]
+  },
+  {
     "version": "1.8",
     "date": "2026-11-15",
     "changes": [

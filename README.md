@@ -104,7 +104,25 @@ Click an app card in the **Store** to see what it is, with screenshots where the
 **Manage** on a card under **My apps** opens a page for that app. The top of the page shows what the app uses right now: CPU, memory, disk and network traffic.
 
 - **Container settings** – name, CPU cores, memory, swap, disk size (it can only grow), network bridge, DHCP or a static IP address, and start at boot. Virtual machines get name, CPU cores, memory and start at boot.
+- **Files** – browse the app's files, edit text files, download, rename, delete, and create files and folders. See [File browser](#file-browser) for the one-time setup.
 - **App settings** – the app's environment variables, and the port, path and HTTPS setting used by the **Open** button. Environment changes take effect when the app restarts; the page offers to restart it for you.
+
+## File browser
+
+The Proxmox API token cannot read files inside a container, so the **Files** tab goes through the Proxmox host over SSH. This is the one part of the App Store that needs more than the API token, and it is optional: without the setup, everything else works as before.
+
+**Setup.** Open **Manage** on any app and go to **Files**. The page shows a command. Paste it in the **host's** shell (select your node → **Shell**) and click **I have run it – check**. The command does two things on the host:
+
+- it saves the helper script [`host/appstore-files`](host/appstore-files) as `/usr/local/bin/appstore-files`
+- it adds the App Store's SSH key to root's `authorized_keys`, locked to that one script (`command="…",restrict`). The key cannot open a shell or run anything else.
+
+The key pair is created in the App Store container the first time you open the Files tab, and stays in `/var/lib/appstore`. The container needs the `ssh` program, which the Debian template includes.
+
+**What it can reach.** With the setup done, the App Store can read and change every file in every **running, unprivileged** container on the host. Anyone who can sign in to the App Store can therefore do the same. Each request runs as root *of that container*, not of the host, so it cannot follow a link out of the container or change anything on the host. Containers that are stopped or privileged, virtual machines, and the App Store's own container are not available.
+
+**Limits.** The editor opens text files up to 1 MB in UTF-8. Larger files and other files can be downloaded. There is no upload.
+
+**Remove it** by running this on the host: `rm /usr/local/bin/appstore-files`, and deleting the line that ends in `appstore-files` from `/root/.ssh/authorized_keys`.
 
 ## Good to know
 

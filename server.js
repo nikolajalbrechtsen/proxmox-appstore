@@ -384,6 +384,121 @@ function saveShortcut(b) {
 }
 function deleteShortcut(id) { shortcuts = shortcuts.filter(x => x.id !== id); writeJson(SHORTCUTS_FILE, shortcuts); }
 
+// ---------- file browser ----------
+// The Proxmox API cannot read files in a container, so this goes over SSH to host/appstore-files on the
+// Proxmox host, with a key that can only run that helper. See "File browser" in the README.
+const { spawn, execFile } = require('child_process');
+const FILES_KEY = path.join(DATA, 'files_key');
+const HELPER_SRC = (() => { try { return fs.readFileSync(path.join(__dirname, 'host', 'appstore-files'), 'utf8').replace(/\r\n/g, '\n'); } catch { return ''; } })();
+const HELPER_VERSION = Number((/^my \$VERSION = (\d+);/m.exec(HELPER_SRC) || [])[1]) || 0;
+const MAX_EDIT = 1024 * 1024;   // largest file the editor opens or saves
+const HELPER_ERRORS = {
+  NOTRUNNING: 'Start the app to browse its files.',
+  PRIVILEGED: 'The file browser only works with unprivileged containers.',
+  TOOLARGE: 'This file is too large to open here. Download it instead.',
+  NOTFILE: 'This is not a regular file.',
+};
+// Sends one request to the helper. `input` is the file content for a write. With `onData`, the answer is
+// streamed to it; otherwise it is collected and returned as a Buffer.
+function helper(req, { input, onData, timeout = 30000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const host = config.pve.host;
+    if (!/^[A-Za-z0-9]/.test(host)) return reject(new Error('Invalid Proxmox host name'));
+    // Development only: FILES_HELPER_CMD runs the helper as a local command instead of over SSH.
+    const dev = process.env.FILES_HELPER_CMD && process.env.FILES_HELPER_CMD.split(' ');
+    const p = dev ? spawn(dev[0], dev.slice(1)) : spawn('ssh', ['-F', '/dev/null', '-i', FILES_KEY, '-T',
+      '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'LogLevel=ERROR',
+      '-o', 'StrictHostKeyChecking=accept-new', '-o', 'UserKnownHostsFile=' + path.join(DATA, 'known_hosts'),
+      'root@' + host, 'appstore-files']);
+    const out = []; let size = 0, err = '', settled = false;
+    const timer = setTimeout(() => { p.kill(); finish(new Error('The Proxmox host took too long to answer')); }, timeout);
+    const finish = (e, v) => { if (settled) return; settled = true; clearTimeout(timer); e ? reject(e) : resolve(v); };
+    p.on('error', e => finish(new Error(e.code === 'ENOENT' ? 'ssh is not installed in the App Store container. Run this in its console: apt install -y openssh-client' : e.message)));
+    p.stdin.on('error', () => {});
+    p.stdout.on('data', c => { if (onData) return onData(c); size += c.length; if (size > 8e6) { p.kill(); return finish(new Error('The answer from the host is too large')); } out.push(c); });
+    p.stderr.on('data', c => { if (err.length < 4000) err += c; });
+    p.on('close', code => {
+      if (code === 0) return finish(null, Buffer.concat(out));
+      const m = /^ERR: (.*)$/m.exec(err);
+      if (m) return finish(new Error(HELPER_ERRORS[m[1]] || m[1]));
+      const e = new Error('Cannot reach the file helper on the Proxmox host' + (err.trim() ? ': ' + err.trim().split('\n').pop().slice(0, 200) : '')); e.setup = true; finish(e);
+    });
+    p.stdin.end(Buffer.concat([Buffer.from(JSON.stringify(req) + '\n'), input || Buffer.alloc(0)]));
+  });
+}
+// What to paste in the host's shell: installs the helper and allows this App Store's key to run it, and nothing else.
+function filesSetupCommand(pub) {
+  const line = `command="/usr/local/bin/appstore-files",restrict ${pub}`;
+  return `cat > /usr/local/bin/appstore-files <<'APPSTORE_FILES_EOF'\n${HELPER_SRC.trimEnd()}\nAPPSTORE_FILES_EOF\n`
+    + `chmod 755 /usr/local/bin/appstore-files\nmkdir -p /root/.ssh\n`
+    + `grep -qF '${pub.split(' ')[1]}' /root/.ssh/authorized_keys 2>/dev/null || echo '${line}' >> /root/.ssh/authorized_keys\n`
+    + `echo "File browser helper installed."\n`;
+}
+async function filesStatus() {
+  if (!HELPER_SRC) return { connected: false, error: 'host/appstore-files is missing from this installation.' };
+  if (!fs.existsSync(FILES_KEY + '.pub')) {
+    try { await new Promise((res, rej) => execFile('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'appstore-files', '-f', FILES_KEY], e => e ? rej(e) : res())); }
+    catch (e) { return { connected: false, error: e.code === 'ENOENT' ? 'ssh is not installed in the App Store container. Run this in its console, then reload: apt install -y openssh-client' : 'Could not create an SSH key: ' + e.message }; }
+  }
+  const pub = fs.readFileSync(FILES_KEY + '.pub', 'utf8').trim();
+  if (!/^ssh-ed25519 [A-Za-z0-9+/=]+( [\w.@-]+)?$/.test(pub)) return { connected: false, error: 'The SSH key in the data folder is not valid. Delete files_key and files_key.pub there and reload.' };
+  try {
+    const v = JSON.parse(await helper({ op: 'version' })).version;
+    if (v >= HELPER_VERSION) return { connected: true };
+    return { connected: false, command: filesSetupCommand(pub), error: 'The helper on the Proxmox host is an older version. Run the command again to update it.' };
+  } catch (e) { return { connected: false, command: filesSetupCommand(pub), error: e.message }; }
+}
+const filePath = p => {
+  if (typeof p !== 'string' || !p.startsWith('/') || p.includes('\0') || p.length > 4096) throw new Error('Bad path');
+  return path.posix.normalize(p);
+};
+const fileName = n => { if (typeof n !== 'string' || !n || n === '.' || n === '..' || /[/\0]/.test(n) || n.length > 255) throw new Error('A name cannot be empty or contain "/"'); return n; };
+// Only containers this App Store lists, and never its own.
+async function filesGuest(vmid) {
+  const g = (await listGuests()).guests.find(x => String(x.vmid) === vmid && x.type === 'lxc');
+  if (!g) throw new Error('Guest not found');
+  if (g.self) throw new Error('This is the App Store itself - manage it from the Proxmox UI.');
+  return Number(vmid);
+}
+async function filesList(vmid, p) {
+  const r = JSON.parse(await helper({ op: 'list', vmid, path: p }));
+  r.entries.sort((a, b) => ((a.type === 'd' || a.target === 'd') ? 0 : 1) - ((b.type === 'd' || b.target === 'd') ? 0 : 1) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { path: p, ...r };
+}
+async function filesRead(vmid, p) {
+  const buf = await helper({ op: 'read', vmid, path: p, max: MAX_EDIT });
+  const text = buf.toString('utf8');
+  // Only text that survives the round trip unchanged may be edited; anything else would be damaged by saving.
+  if (buf.includes(0) || !Buffer.from(text, 'utf8').equals(buf)) return { path: p, binary: true };
+  const crlf = text.includes('\r\n') && !/(^|[^\r])\n/.test(text);
+  return { path: p, text: crlf ? text.replace(/\r\n/g, '\n') : text, crlf };
+}
+async function filesChange(vmid, b) {
+  // write, rename and delete name an existing `path`; create and mkdir name a new `name` inside `dir`.
+  const p = ['write', 'rename', 'delete'].includes(b.op) ? filePath(b.path) : null, join = n => path.posix.join(filePath(b.dir), fileName(n));
+  const write = (to, create) => {
+    let text = String(b.text ?? ''); if (b.crlf) text = text.replace(/\r?\n/g, '\r\n');
+    const input = Buffer.from(text, 'utf8');
+    if (input.length > MAX_EDIT) throw new Error('This file is too large to save here (the limit is 1 MB).');
+    return helper({ op: 'write', vmid, path: to, size: input.length, create }, { input });
+  };
+  if (b.op === 'write') await write(p, false);
+  else if (b.op === 'create') await write(join(b.name), true);
+  else if (b.op === 'mkdir') await helper({ op: 'mkdir', vmid, path: join(b.name) });
+  else if (b.op === 'rename') await helper({ op: 'rename', vmid, path: p, to: path.posix.join(path.posix.dirname(p), fileName(b.name)) });
+  else if (b.op === 'delete') { if (p === '/') throw new Error('The top folder cannot be deleted'); await helper({ op: 'delete', vmid, path: p }); }
+  else throw new Error('Unknown action');
+  return { ok: true };
+}
+// Streams a file to the browser. Waits for the first data before answering, so a failure can still be reported.
+function filesDownload(vmid, p, res) {
+  let started = false;
+  const start = () => { if (!started) { started = true; res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(path.posix.basename(p) || 'file')}` }); } };
+  return helper({ op: 'read', vmid, path: p }, { onData: c => { start(); res.write(c); }, timeout: 10 * 60 * 1000 })
+    .then(() => { start(); res.end(); }, e => { if (started) res.destroy(); else throw e; });
+}
+
 // ---------- update check ----------
 // Compares the commit this process was started from with the newest one on GitHub.
 const GIT_DIR = path.join(__dirname, '.git');
@@ -463,9 +578,9 @@ const authed = req => { const t = sid(req), e = t && sessions.get(t); return !!e
 
 // ---------- HTTP ----------
 const send = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
-const readBody = req => new Promise((resolve, reject) => {
+const readBody = (req, max = 1e5) => new Promise((resolve, reject) => {
   if (!/^application\/json/.test(req.headers['content-type'] || '')) return reject(new Error('Expected JSON'));
-  let d = ''; req.on('data', c => { d += c; if (d.length > 1e5) req.destroy(); });
+  let d = ''; req.on('data', c => { d += c; if (d.length > max) req.destroy(); });
   req.on('end', () => { try { resolve(JSON.parse(d || '{}')); } catch { reject(new Error('Invalid JSON')); } });
 });
 
@@ -493,6 +608,17 @@ async function api(req, res, url) {
     const u = await updateInfo();
     if (u.mode === 'button') fs.writeFileSync(path.join(DATA, 'update-request'), '');
     return send(res, 200, u);
+  }
+  if (p === '/api/files/status' && M === 'GET') return send(res, 200, await filesStatus());
+  const f = /^\/api\/guests\/lxc\/(\d+)\/(files|file|download)$/.exec(p);
+  if (f) {
+    const vmid = await filesGuest(f[1]);
+    if (f[2] === 'files' && M === 'POST') return send(res, 200, await filesChange(vmid, await readBody(req, 8e6)));
+    if (M !== 'GET') return send(res, 404, { error: 'Not found' });
+    const fp = filePath(url.searchParams.get('path'));
+    if (f[2] === 'files') return send(res, 200, await filesList(vmid, fp));
+    if (f[2] === 'file') return send(res, 200, await filesRead(vmid, fp));
+    return filesDownload(vmid, fp, res);
   }
   if (p === '/api/shortcuts' && M === 'GET') return send(res, 200, shortcuts);
   if (p === '/api/shortcuts' && M === 'POST') return send(res, 200, saveShortcut(await readBody(req)));
