@@ -52,13 +52,25 @@ It then works for a few minutes. This is what it does:
 - creates a Proxmox user, `appstore@pve`, with a role that can manage containers and VMs but cannot change users, permissions or host settings, and an API token for it
 - hands the token to the App Store, so you don't have to copy it
 
-When it finishes, it prints the App Store's address:
+Each step shows a spinner while it runs and a check mark when it is done. When it finishes, it prints the App Store's address:
 
 ```
-Done. Open the App Store in your browser and choose a password:
+  ✔ [1/6] Getting the Debian 13 template 14s
+  ✔ [2/6] Creating container 105 9s
+  ✔ [3/6] Waiting for the container's network 4s
+  ✔ [4/6] Installing the App Store 71s
+  ✔ [5/6] Creating the Proxmox API token 2s
+  ✔ [6/6] Starting the App Store 1s
 
-    http://192.168.1.50
+  ╭────────────────────────────────────────────╮
+  │  ✔ Installed in 101s                       │
+  │                                            │
+  │  Open this and choose a password:          │
+  │  http://192.168.1.50                       │
+  ╰────────────────────────────────────────────╯
 ```
+
+If a step fails, the installer shows what that step said and where the full log is.
 
 ### Step 3. Choose a password
 
