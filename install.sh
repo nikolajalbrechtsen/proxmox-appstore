@@ -20,7 +20,7 @@ set -euo pipefail
 REPO_URL="${REPO_URL:-https://github.com/nikolajalbrechtsen/proxmox-appstore.git}"
 CT_NAME="${CT_NAME:-appstore}"
 BRIDGE="${BRIDGE:-vmbr0}"
-ROLE_PRIVS="VM.Allocate,VM.Audit,VM.PowerMgmt,VM.Config.Disk,VM.Config.CPU,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Sys.Audit,Sys.AccessNetwork,SDN.Use"
+ROLE_PRIVS="VM.Allocate,VM.Audit,VM.PowerMgmt,VM.Config.Disk,VM.Config.CPU,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Sys.Audit,Sys.AccessNetwork,SDN.Use"
 
 # ---------- look ----------
 # Colors and the spinner are only used on a real terminal; a pipe or NO_COLOR gets plain lines.

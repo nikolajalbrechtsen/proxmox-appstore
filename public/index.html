@@ -303,7 +303,7 @@ function showSetup() {
     async v => { await api('setup', v); location.reload(); }, false);
   modal(`<h2>Welcome to App Store</h2>
     <p>Connect it to Proxmox with an API token. Run this once in the Proxmox host shell (Datacenter → pve → Shell), then paste the result below.</p>
-    <pre>pveum role add AppStore -privs "VM.Allocate,VM.Audit,VM.PowerMgmt,VM.Config.Disk,VM.Config.CPU,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Sys.Audit,Sys.AccessNetwork,SDN.Use"
+    <pre>pveum role add AppStore -privs "VM.Allocate,VM.Audit,VM.PowerMgmt,VM.Config.Disk,VM.Config.CPU,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Sys.Audit,Sys.AccessNetwork,SDN.Use"
 pveum user add appstore@pve
 pveum acl modify / -user appstore@pve -role AppStore
 pveum user token add appstore@pve web --privsep 0</pre>
@@ -1034,17 +1034,24 @@ function renderStore() {
   const sc = $('#sc'); if (sc.options.length !== cats.length + 1) sc.innerHTML = '<option value="">All categories</option>' + cats.map(c => `<option>${esc(c)}</option>`).join('');
   const q = $('#sq').value.toLowerCase(), c = sc.value;
   const installed = new Set((data ? data.guests : []).map(g => g.app).filter(Boolean));
-  $('#apps').innerHTML = catalog.filter(a => (!c || a.category === c) && (!q || (a.name + a.desc + a.category).toLowerCase().includes(q))).map(a => `
-    <div class="app click" data-app="${esc(a.id)}" tabindex="0" role="button" aria-label="${esc(a.name)}: details"><div class="row">${icon(a.icon, a.name)}<div class="grow"><div class="name">${esc(a.name)}</div><div class="sub">${esc(a.category)}${installed.has(a.id) ? ' · installed' : ''}</div></div></div>
+  // Every app is installed once on a real Proxmox host before it is listed (tools/compat.js). The ones that
+  // failed are left out unless asked for, and the ones nobody has tested yet say so.
+  const match = catalog.filter(a => (!c || a.category === c) && (!q || (a.name + a.desc + a.category).toLowerCase().includes(q)));
+  const broken = match.filter(a => a.tested === 'fails').length;
+  $('#apps').innerHTML = match.filter(a => showBroken || a.tested !== 'fails').map(a => `
+    <div class="app click" data-app="${esc(a.id)}" tabindex="0" role="button" aria-label="${esc(a.name)}: details"><div class="row">${icon(a.icon, a.name)}<div class="grow"><div class="name">${esc(a.name)}</div><div class="sub">${esc(a.category)}${installed.has(a.id) ? ' · installed' : ''}</div></div>${a.tested === 'fails' ? '<span class="tag" style="color:var(--bad)">Does not work</span>' : a.tested === 'untested' ? '<span class="tag">Not tested</span>' : ''}</div>
       <p>${esc(a.desc)}</p>
       <div class="foot"><span class="sub">${a.cores} core${a.cores > 1 ? 's' : ''} · ${a.memory >= 1024 ? a.memory / 1024 + ' GB' : a.memory + ' MB'} · ${a.disk} GB disk</span>
       <button class="btn primary sm" data-install="${esc(a.id)}">Install</button></div></div>`).join('') + (!q && !c || 'custom docker image'.includes(q) ? `
     <div class="app custom"><div class="row"><div class="ico">+</div><div class="grow"><div class="name">Custom image</div><div class="sub">Any Docker / OCI image</div></div></div>
       <p>Run any image from Docker Hub, GHCR or another registry as a container.</p>
-      <div class="foot"><span></span><button class="btn sm" data-install="custom">Set up</button></div></div>` : '');
+      <div class="foot"><span></span><button class="btn sm" data-install="custom">Set up</button></div></div>` : '')
+    + (broken ? `<div class="empty" style="padding:14px 0">${showBroken ? `${broken} of these did not work when they were tested on Proxmox.` : `${broken} app${broken > 1 ? 's that do' : ' that does'} not work as a Proxmox container ${broken > 1 ? 'are' : 'is'} hidden.`} <button class="btn sm" type="button" data-broken>${showBroken ? 'Hide them' : 'Show anyway'}</button></div>` : '');
 }
+let showBroken = false;
 $('#sq').oninput = $('#sc').onchange = renderStore;
 $('#apps').onclick = e => {
+  if (e.target.closest('[data-broken]')) { showBroken = !showBroken; return renderStore(); }
   const b = e.target.closest('[data-install]');
   if (b) return installDialog(b.dataset.install);
   const card = e.target.closest('[data-app]');
@@ -1065,7 +1072,10 @@ function showApp(id) {
     ${shots.length ? `<div id="gallery"><a id="shotLink" href="${esc(shots[0])}" target="_blank" rel="noopener" title="Open full size"><img class="shot" id="shotMain" src="${esc(shots[0])}" alt="Screenshot of ${esc(a.name)}" referrerpolicy="no-referrer"></a>
       ${shots.length > 1 ? `<div class="thumbs">${shots.map((s, i) => `<button type="button" class="thumb ${i ? '' : 'on'}" data-src="${esc(s)}" aria-label="Screenshot ${i + 1}"><img src="${esc(s)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}</div>` : ''}</div>` : ''}
     <p style="margin-top:14px;color:var(--text)">${esc(a.desc)}</p>
+    ${a.tested === 'fails' ? `<p style="color:var(--bad)">This app did not work when it was tested as a Proxmox container${a.testDate ? ' on ' + esc(a.testDate) : ''}: ${esc(a.testNote || 'it did not start')}</p>`
+      : a.tested === 'untested' ? '<p>This app has not been tested as a Proxmox container yet, so it may not start.</p>' : ''}
     <dl class="info">
+      <dt>Tested</dt><dd>${a.tested === 'ok' ? `Installed and started on Proxmox VE ${esc(a.testPve || '')}${a.testDate ? ', ' + esc(a.testDate) : ''}` : a.tested === 'fails' ? 'Failed' : 'Not yet'}</dd>
       <dt>Docker image</dt><dd><code>${esc(a.image)}</code></dd>
       <dt>Web page</dt><dd>${a.port ? 'Port ' + a.port + esc(a.path || '') + (a.https ? ' over HTTPS. Your browser will warn about the self-signed certificate the first time' : '') + ', opened with the Open button' : 'None – this app has no web page'}</dd>
       <dt>Default size</dt><dd>${resources(a)}</dd>
@@ -1153,7 +1163,8 @@ function renderJobs() {
   $('#jobs').innerHTML = jobs.map(j => `<div class="job ${esc(j.status)}">
     ${j.status === 'done' ? '<div class="mark" style="color:var(--ok)">✓</div>' : j.status === 'failed' ? '<div class="mark" style="color:var(--bad)">✕</div>' : '<div class="spin"></div>'}
     <div class="grow"><div class="name">${esc(j.appName)} <span class="sub">${esc(j.hostname)}${j.vmid ? ' · container ' + j.vmid : ''}</span></div>
-    <div class="st">${esc(j.status === 'failed' ? j.error : j.status === 'done' && j.ip && !j.url ? 'Installed at ' + j.ip : j.step)}</div></div>
+    <div class="st">${esc(j.status === 'failed' ? j.error : j.status === 'done' && j.ip && !j.url ? 'Installed at ' + j.ip : j.step)}</div>
+    ${j.status === 'failed' && j.detail ? `<pre style="margin:8px 0 0;max-height:220px">${esc(j.detail)}</pre>` : ''}</div>
     ${j.status === 'done' && j.url ? `<a class="btn sm primary" href="${esc(j.url)}" target="_blank" rel="noopener">Open</a>` : ''}</div>`).join('')
     || '<div class="empty">No installs yet. Pick something from the Store.</div>';
 }

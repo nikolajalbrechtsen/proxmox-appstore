@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.12",
+    "date": "2026-11-15",
+    "changes": [
+      { "type": "fixed", "text": "Apps that need the network the moment they start, such as Minecraft Server, no longer stop right after installing. Proxmox connects the network a few seconds after the app starts, so the installer now makes the app wait for it." },
+      { "type": "new", "text": "Every app in the store has been installed and started on a real Proxmox host. Apps that failed the test are hidden, and apps nobody has tested yet are marked Not tested. tools/compat.js runs the test for new apps." },
+      { "type": "improved", "text": "When an app stops right after installing, the Activity page shows the last lines the app printed, so you can see why. This needs the file browser to be set up." },
+      { "type": "fixed", "text": "Downloaded images are removed from the host after an install. This needs one more right on the API role: run 'pveum role modify AppStore --privs Datastore.Allocate --append 1' once in the Proxmox host's shell." }
+    ]
+  },
+  {
     "version": "1.11",
     "date": "2026-11-15",
     "changes": [

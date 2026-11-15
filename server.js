@@ -3,6 +3,7 @@
 // Talks to the Proxmox VE API with an API token; serves the web UI in public/.
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
 const crypto = require('crypto'), os = require('os');
+const { waitNet, wrappable, capture, summary, LOG } = require('./entrypoint');
 
 const PORT = Number(process.env.PORT || 80);
 const DATA = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -137,6 +138,13 @@ function normImage(ref) {
   if (!/:[\w.-]+$/.test(ref.split('/').pop())) ref += ':latest';
   return ref;
 }
+// What the store shows: every app with the result of its compatibility test (tools/compat.js writes compat.json).
+// A result only counts for the image it was made with, so an app whose image is changed is "untested" again.
+const compat = readJson(path.join(__dirname, 'compat.json'), {});
+const catalogView = catalog.map(a => {
+  let c = compat[a.id]; try { if (c && c.image !== normImage(a.image)) c = null; } catch { c = null; }
+  return { ...a, tested: !c ? 'untested' : c.ok ? 'ok' : 'fails', testDate: c ? c.date : undefined, testPve: c ? c.pve : undefined, testNote: c && !c.ok ? c.error : undefined };
+});
 function queueInstall(body) {
   let app = catalog.find(a => a.id === body.appId);
   if (!app) {
@@ -207,13 +215,15 @@ async function runInstall(job) {
     const O = job.opt;
     job.vmid = O.vmid || Number(await pve('GET', '/cluster/nextid'));
     step(`Creating container ${job.vmid} (${job.hostname})`);
-    await waitTask(await pve('POST', node() + '/lxc', {
+    const make = extra => pve('POST', node() + '/lxc', {
       vmid: job.vmid, hostname: job.hostname, ostemplate: tmpl.volid, rootfs: `${O.storage}:${job.disk}`,
       cores: job.cores, memory: job.memory, swap: O.swap, unprivileged: 1, onboot: O.onboot,
       net0: `name=eth0,bridge=${O.bridge},ip=${O.ip}${O.gw ? ',gw=' + O.gw : ''},type=veth`,
       tags: `appstore;${job.appId}`.replace(/[^a-z0-9;_-]/g, ''),
-      description: `Installed by App Store\n\nApp: ${job.appName}\n\nImage: ${job.image}\n`,
-    }));
+      description: `Installed by App Store\n\nApp: ${job.appName}\n\nImage: ${job.image}\n`, ...extra,
+    }).then(up => waitTask(up));
+    // Proxmox looks inside the image to see which Linux it is. For one it does not know, say so up front.
+    await make({}).catch(async e => { if (!/OS distribution|os-release|\/etc\/passwd/i.test(e.message)) throw e; await sleep(5000); await make({ ostype: 'unmanaged' }); });
   } finally {
     // Remove the downloaded image so the next install always pulls a fresh copy.
     pve('DELETE', `${tmplDir}/content/${encodeURIComponent(tmpl.volid)}`).catch(() => {});
@@ -221,27 +231,73 @@ async function runInstall(job) {
   apps[job.vmid] = { appId: job.appId, name: job.appName, port: job.port, path: job.path, https: job.https, image: job.image };
   writeJson(APPS_FILE, apps);
 
+  const base = `${node()}/lxc/${job.vmid}`, cfg = await pve('GET', base + '/config'), set = {};
   if (Object.keys(job.env).length) {
     step('Applying settings');
-    const cfg = await pve('GET', `${node()}/lxc/${job.vmid}/config`);
     const merged = {};
     for (const kv of (cfg.env || '').split('\0').filter(Boolean)) { const i = kv.indexOf('='); merged[kv.slice(0, i)] = kv.slice(i + 1); }
     Object.assign(merged, job.env);
-    await pve('PUT', `${node()}/lxc/${job.vmid}/config`, { env: Object.entries(merged).map(([k, v]) => `${k}=${v}`).join('\0') });
+    set.env = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join('\0');
   }
+  // Proxmox connects the network a few seconds after the app has started. An app that needs it at once (to
+  // download something, say) would give up and stop, so the start command first waits for the network.
+  // Only when the app is started now: that is how we find out whether the image can run the wrapper at all.
+  const own = cfg.entrypoint, wrap = job.opt.start && wrappable(own);
+  if (wrap) set.entrypoint = waitNet(own);
+  if (Object.keys(set).length) await pve('PUT', base + '/config', set);
   if (!job.opt.start) { cache.clear(); return; }
+
+  // Starts the container and watches it until it has a network address. Returns why it failed, or null.
+  const boot = async () => {
+    try { await waitTask(await pve('POST', base + '/status/start'), 3 * 60 * 1000); } catch (e) { return 'Proxmox could not start the container: ' + e.message; }
+    step('Waiting for network address');
+    for (let i = 0; i < 30; i++) {
+      await sleep(2000);
+      if ((await pve('GET', base + '/status/current')).status !== 'running') return 'stopped';
+      job.ip = firstIp(await pve('GET', base + '/interfaces').catch(() => []));
+      if (job.ip) return null;
+    }
+    return null;   // running without an address: the app is installed, the overview shows the address once there is one
+  };
+  const halt = async () => { if ((await pve('GET', base + '/status/current')).status !== 'stopped') await waitTask(await pve('POST', base + '/status/stop'), 60000).catch(() => {}); };
   step('Starting container');
-  await waitTask(await pve('POST', `${node()}/lxc/${job.vmid}/status/start`));
-  step('Waiting for network address');
-  for (let i = 0; i < 30 && !job.ip; i++) {
-    await sleep(2000);
-    job.ip = firstIp(await pve('GET', `${node()}/lxc/${job.vmid}/interfaces`).catch(() => []));
-    // Apps without a web UI (port 0) get no Open link.
-    if (job.ip && job.port) job.url = appUrl(job.ip, job);
+  let failed = await boot();
+  if (failed && wrap) {
+    // It may be the wrapper: an image without a shell cannot run it. Try the image's own start command.
+    step('Starting container again');
+    // Proxmox needs a moment to tidy up after a start that failed, or the next start trips over it.
+    await halt(); await sleep(8000); await pve('PUT', base + '/config', { entrypoint: own });
+    failed = await boot();
+    if (failed && /monitor socket|not running|timeout/i.test(failed)) { await halt(); await sleep(15000); failed = await boot(); }
+    if (failed) {
+      // The app itself gives up. Run it once more with its output saved, so the reason can be shown.
+      step('Finding out why it stopped');
+      job.detail = await startOutput(job.vmid, base, own).catch(() => null);
+      await halt().catch(() => {}); await pve('PUT', base + '/config', { entrypoint: waitNet(own) }).catch(() => {});
+    }
   }
-  const st = await pve('GET', `${node()}/lxc/${job.vmid}/status/current`);
-  if (st.status !== 'running') throw new Error('The container was created but stopped right after starting. This image may not be compatible with LXC.');
   cache.clear();
+  if (failed) throw new Error((failed === 'stopped' ? 'The container was created, but the app in it stopped right after starting.' : failed)
+    + (job.detail ? ' The last lines it printed are shown below.' : ' This image may not work as a Proxmox container. Set up the file browser to see what the app prints when this happens.'));
+  // A few seconds more: an app that cannot run at all has usually given up by now.
+  await sleep(6000);
+  if ((await pve('GET', base + '/status/current')).status !== 'running') {
+    if (wrap) job.detail = await startOutput(job.vmid, base, own).catch(() => null);
+    await halt().catch(() => {}); if (wrap) await pve('PUT', base + '/config', { entrypoint: waitNet(own) }).catch(() => {});
+    throw new Error('The container was created, but the app in it stopped a few seconds after starting.' + (job.detail ? ' The last lines it printed are shown below.' : ''));
+  }
+  // Apps without a web UI (port 0) get no Open link.
+  if (job.ip && job.port) job.url = appUrl(job.ip, job);
+}
+// What an app prints when it starts, for an app that stops by itself. The container is started with its output
+// going to a file and is kept alive for a while, and the file is read through the file helper. Returns the last
+// lines, or null when that is not possible (no file browser, or an image without a shell).
+async function startOutput(vmid, base, entrypoint) {
+  if (!fs.existsSync(path.join(DATA, 'files_key'))) return null;
+  await pve('PUT', base + '/config', { entrypoint: capture(entrypoint) });
+  await waitTask(await pve('POST', base + '/status/start'), 3 * 60 * 1000);
+  await sleep(25000);
+  return summary((await helper({ op: 'read', vmid, path: LOG, max: 5e6 })).toString('utf8'));
 }
 
 // ---------- guest actions ----------
@@ -802,7 +858,7 @@ async function api(req, res, url) {
   if (!config || !authed(req)) return send(res, 401, { error: 'Not signed in' });
   if (p === '/api/logout' && M === 'POST') { sessions.delete(sid(req)); return send(res, 200, { ok: true }); }
   if (p === '/api/guests' && M === 'GET') return send(res, 200, await listGuests());
-  if (p === '/api/catalog' && M === 'GET') return send(res, 200, catalog);
+  if (p === '/api/catalog' && M === 'GET') return send(res, 200, catalogView);
   if (p === '/api/jobs' && M === 'GET') return send(res, 200, jobs);
   if (p === '/api/changelog' && M === 'GET') return send(res, 200, readJson(path.join(__dirname, 'changelog.json'), []));
   if (p === '/api/update' && M === 'GET') return send(res, 200, await updateInfo());

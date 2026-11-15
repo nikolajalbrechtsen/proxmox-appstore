@@ -147,7 +147,7 @@ The last command prints the container's IP address. You need it in step 4.
 Open the **host's** shell (select your node in the left tree → **Shell**) and paste:
 
 ```sh
-pveum role add AppStore -privs "VM.Allocate,VM.Audit,VM.PowerMgmt,VM.Config.Disk,VM.Config.CPU,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Sys.Audit,Sys.AccessNetwork,SDN.Use"
+pveum role add AppStore -privs "VM.Allocate,VM.Audit,VM.PowerMgmt,VM.Config.Disk,VM.Config.CPU,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Sys.Audit,Sys.AccessNetwork,SDN.Use"
 pveum user add appstore@pve
 pveum acl modify / -user appstore@pve -role AppStore
 pveum user token add appstore@pve web --privsep 0
@@ -293,6 +293,29 @@ Add an entry to `catalog.json`:
 
 Restart the app afterwards (`systemctl restart appstore`).
 
+A new app shows up in the store with a **Not tested** mark until it has passed the compatibility test below.
+
+## Compatibility test
+
+A Docker image is not guaranteed to work as a Proxmox container, so every app in the store is tried on a real Proxmox host before it is listed. `tools/compat.js` does for each app what the store does (download the image, create the container, apply the default settings, start it), checks that the container is still running after 40 seconds and that its web page answers, and deletes it again. The results are kept in `compat.json`:
+
+- an app that **passed** is listed as usual, and its details show the Proxmox version and date it was tested on
+- an app that **failed** is hidden from the store. A line under the list says how many are hidden, and **Show anyway** brings them back with the reason
+- an app with **no result**, or whose `image` was changed after the test, is listed with a **Not tested** mark
+
+Test an app you added, in the App Store container's console:
+
+```sh
+cd /opt/appstore
+node tools/compat.js --only my-app        # one or more ids, separated by commas
+cp /var/lib/appstore/compat-results.json compat.json
+systemctl restart appstore
+```
+
+Without `--only` it tests every app that has no result yet; `--failed` and `--retest` run the failed ones or all of them again. Test containers get IDs from 9000 and the tag `appstore-test`. The whole catalog takes several hours and downloads every image once. Docker Hub limits anonymous downloads, so the run pauses now and then. `node tools/compat.js --check` tests nothing: it lists the catalog apps that have no passing result, for use before you publish a change to the catalog.
+
+**The network wait.** Proxmox connects a container's network a few seconds *after* the app in it has started. An app that needs the network at once, such as a game server that downloads its files at start, finds none, gives up, and the container stops. The installer therefore puts a small wait in front of the app's start command: up to 60 seconds for the network, then the app starts as usual. An image without a shell cannot run that wait, so when the container does not start with it, the installer goes back to the image's own start command and tries once more. When an app still stops, the **Activity** page shows the last lines the app printed (this needs the [file browser](#file-browser) to be set up).
+
 ## Changelog
 
 The **Changelog** tab in the app lists what changed in each version. It reads `changelog.json`. When you change the app, add an entry at the top:
@@ -311,3 +334,5 @@ The **Changelog** tab in the app lists what changed in each version. It reads `c
 - **"Proxmox: Permission check failed" on an action:** the token is missing a privilege. Compare the role with step 3 (`pveum role list` on the host).
 - **Forgot the password, or want to connect to another host:** delete `/var/lib/appstore/config.json` in the container and run `systemctl restart appstore`. The setup page appears again.
 - **An install fails while downloading:** Docker Hub limits anonymous downloads. Wait a while and try again.
+- **"The app in it stopped right after starting":** the Activity page shows the last lines the app printed when the [file browser](#file-browser) is set up. The container is left in place, stopped, so you can change its settings under **Manage** and start it again.
+- **Downloaded images pile up on the host** (`appstore-….tar` under the template storage): versions before 1.12 created the API role without the right to delete them. Run this once in the host's shell: `pveum role modify AppStore --privs Datastore.Allocate --append 1`. Old files can be deleted in the Proxmox UI under the storage's **CT Templates**.
