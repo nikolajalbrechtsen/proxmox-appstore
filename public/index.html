@@ -121,6 +121,12 @@ details.adv[open] summary{margin-bottom:6px}
 .panel p{color:var(--muted);margin:0 0 12px;font-size:13px}
 .panel .info{margin-top:0}
 @media (max-width:560px){.three{grid-template-columns:1fr 1fr}}
+.app p.notes{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
+.app a.name{color:inherit;text-decoration:none;display:block}
+.app a.name:hover{text-decoration:underline}
+.modal h3{margin:12px 0 6px;font-size:14px}
+.modal .rel{box-shadow:none;padding:0;border:0;margin-bottom:14px}
+nav{min-width:0;overflow-x:auto}
 .err{color:var(--bad);font-size:13px;min-height:18px;margin:4px 0}
 pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:0 0 12px}
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:9px 16px;border-radius:9px;font-weight:600;z-index:30;max-width:90vw}
@@ -145,10 +151,12 @@ pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;ove
   <nav>
     <button data-tab="overview" class="on">My apps</button>
     <button data-tab="store">Store</button>
+    <button data-tab="shortcuts">Shortcuts</button>
     <button data-tab="activity">Activity<span class="badge hidden" id="jobBadge"></span></button>
     <button data-tab="changelog">Changelog</button>
   </nav>
   <div class="spacer"></div>
+  <button class="btn sm primary hidden" id="updateBtn">Update</button>
   <button class="btn sm" id="logout">Sign out</button>
 </div></header>
 
@@ -163,6 +171,7 @@ pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;ove
   </section>
   <section id="manage" class="hidden">
     <div class="mhead" id="mhead"></div>
+    <div class="stats" id="mstats"></div>
     <div class="subtabs" id="mtabs"></div>
     <div id="mbody"></div>
   </section>
@@ -172,6 +181,13 @@ pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;ove
       <select id="sc" aria-label="Category"></select>
     </div>
     <div class="grid" id="apps"></div>
+  </section>
+  <section id="shortcuts" class="hidden">
+    <div class="tools">
+      <input id="lq" type="search" placeholder="Search shortcuts…" aria-label="Search shortcuts">
+      <button class="btn primary" id="addLink">Add shortcut</button>
+    </div>
+    <div class="grid" id="links"></div>
   </section>
   <section id="activity" class="hidden"><div id="jobs"></div></section>
   <section id="changelog" class="hidden"><div id="releases"></div></section>
@@ -339,6 +355,15 @@ function renderManageHead() {
     <div class="grow"><div class="name">${esc(g.name)}</div>
       <div class="sub">${g.type === 'lxc' ? 'Container' : 'VM'} ${g.vmid}${g.ip ? ' · ' + esc(g.ip) : ''}${g.status === 'running' ? ' · up ' + upt(g.uptime) : ''}</div></div>
     ${guestState(g)}<div class="actions">${guestButtons(g, false)}</div>`;
+  // What the app uses right now. Follows the same 5-second refresh as the header.
+  const on = g.status === 'running', lxc = g.type === 'lxc', cores = `${g.maxcpu} core${g.maxcpu > 1 ? 's' : ''}`;
+  const tile = (k, v, p) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${p == null ? '' : meter(p)}</div>`;
+  $('#mstats').innerHTML = [
+    tile('CPU', on ? `${(g.cpu * 100).toFixed(1)}% <small>of ${cores}</small>` : `– <small>${cores}</small>`, on ? g.cpu * 100 : 0),
+    tile('Memory', on ? `${bytes(g.mem)} <small>of ${bytes(g.maxmem)}</small>` : `– <small>${bytes(g.maxmem)}</small>`, on ? pct(g.mem, g.maxmem) : 0),
+    g.maxdisk ? tile('Disk', lxc ? `${bytes(g.disk)} <small>of ${bytes(g.maxdisk)}</small>` : bytes(g.maxdisk), lxc ? pct(g.disk, g.maxdisk) : null) : '',
+    tile('Network since start', on ? `↓ ${bytes(g.netin)} <small>↑ ${bytes(g.netout)}</small>` : '–', null),
+  ].join('');
 }
 function renderManageBody() {
   const g = mguest(); if (!g) return;
@@ -580,6 +605,80 @@ async function pollJobs() {
   jobTimer = setTimeout(pollJobs, jobs.some(j => j.status === 'queued' || j.status === 'running') ? 1500 : 15000);
 }
 
+// ---------- shortcuts ----------
+let shortcuts = null;
+async function renderShortcuts() {
+  if (!shortcuts) {
+    $('#links').innerHTML = '<div class="empty">Loading…</div>';
+    try { shortcuts = await api('shortcuts'); } catch (e) { $('#links').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  }
+  const q = $('#lq').value.toLowerCase();
+  $('#links').innerHTML = shortcuts.filter(s => !q || (s.name + ' ' + s.url + ' ' + s.notes).toLowerCase().includes(q)).map(s => `
+    <div class="app"><div class="row">${icon('', s.name)}<div class="grow">
+        <a class="name" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.name)}</a>
+        <div class="sub">${esc(s.url.replace(/^https?:\/\//, '').replace(/\/$/, ''))}</div></div></div>
+      <p class="notes">${esc(s.notes)}</p>
+      <div class="foot"><a class="btn sm primary" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">Open</a>
+        <span><button class="btn sm" data-edit="${esc(s.id)}">Edit</button> <button class="btn sm danger" data-del="${esc(s.id)}">Delete</button></span></div></div>`).join('')
+    || `<div class="empty">${shortcuts.length ? 'Nothing matches.' : 'No shortcuts yet. Add a link you want to keep, with a note about what it is for.'}</div>`;
+}
+function shortcutDialog(s) {
+  modal(`<h2>${s ? 'Edit shortcut' : 'Add shortcut'}</h2>
+    <div class="field"><label>Link</label><input name="url" value="${esc(s ? s.url : '')}" placeholder="google.com" maxlength="2000" required autofocus></div>
+    <div class="field"><label>Name (optional)</label><input name="name" value="${esc(s ? s.name : '')}" maxlength="80"></div>
+    <div class="field"><label>Notes</label><textarea name="notes" maxlength="4000" style="font:inherit;min-height:110px">${esc(s ? s.notes : '')}</textarea></div>
+    <div class="err"></div>
+    <div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>`,
+    async v => {
+      const r = await api('shortcuts', { ...v, id: s ? s.id : undefined });
+      if (s) shortcuts[shortcuts.indexOf(s)] = r; else shortcuts.push(r);
+      closeModal(); renderShortcuts();
+    });
+}
+$('#lq').oninput = renderShortcuts;
+$('#addLink').onclick = () => shortcuts && shortcutDialog();
+$('#links').onclick = e => {
+  const ed = e.target.closest('[data-edit]'), del = e.target.closest('[data-del]');
+  const s = shortcuts.find(x => x.id === (ed || del || {dataset: {}}).dataset[ed ? 'edit' : 'del']);
+  if (!s) return;
+  if (ed) return shortcutDialog(s);
+  modal(`<h2>Delete ${esc(s.name)}?</h2><p>The link and its notes are removed.</p>
+    <div class="end"><button class="btn" type="button" data-close>Cancel</button><button class="btn danger" type="submit" autofocus>Delete</button></div>`,
+    async () => { await api(`shortcuts/${s.id}/delete`, {}); shortcuts = shortcuts.filter(x => x !== s); closeModal(); renderShortcuts(); });
+};
+
+// ---------- update button ----------
+// Shown in the top bar only while GitHub has a newer version than the one running.
+let upd = null;
+const changeList = r => `<ul>${(r.changes || []).map(c => `<li><span class="kind ${esc(c.type)}">${esc({ new: 'New', improved: 'Improved', fixed: 'Fixed' }[c.type] || c.type)}</span><span>${esc(c.text)}</span></li>`).join('')}</ul>`;
+async function checkUpdate() {
+  try { upd = await api('update'); } catch { return; }
+  $('#updateBtn').classList.toggle('hidden', !upd.available);
+}
+$('#updateBtn').onclick = () => {
+  const how = {
+    button: '<p>Updating takes a few seconds. You may have to sign in again afterwards.</p>',
+    auto: '<p>Automatic updates are on, so this version installs itself within about a minute. Reload the page after that.</p>',
+    manual: `<p>To install it, open the App Store container's console in Proxmox and run:</p><pre>cd /opt/appstore && git pull && systemctl restart appstore</pre>
+      <p>The README's Updating section shows how to let this button install updates for you.</p>`,
+  }[upd.mode];
+  modal(`<h2>Update available</h2><p>A newer version of the App Store is on GitHub.</p>
+    ${(upd.releases || []).map(r => `<div class="rel"><h3>Version ${esc(r.version)}</h3>${changeList(r)}</div>`).join('')}
+    ${how}<div class="err"></div>
+    <div class="end"><button class="btn" type="button" data-close>Close</button>${upd.mode === 'button' ? '<button class="btn primary" type="submit" autofocus>Update now</button>' : ''}</div>`,
+    async (v, f) => {
+      await api('update', {});
+      f.querySelector('[type=submit]').textContent = 'Updating…';
+      // The server restarts on the new version. A lost session reloads the page by itself (see api()).
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        try { if ((await api('update')).running !== upd.running) return location.reload(); } catch {}
+      }
+      f.querySelector('[type=submit]').textContent = 'Update now';
+      throw new Error('The update has not finished. In the container, run: journalctl -u appstore-update -n 20');
+    });
+};
+
 // ---------- shell ----------
 // ---------- changelog ----------
 let releases = null;
@@ -588,19 +687,18 @@ async function renderChangelog() {
     $('#releases').innerHTML = '<div class="empty">Loading…</div>';
     try { releases = await api('changelog'); } catch (e) { $('#releases').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   }
-  const label = { new: 'New', improved: 'Improved', fixed: 'Fixed' };
   const day = d => { const t = new Date(d + 'T00:00:00'); return isNaN(t) ? d : t.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); };
   $('#releases').innerHTML = releases.map((r, i) => `<article class="rel">
     <div class="relhead"><h2>Version ${esc(r.version)}</h2>${i ? '' : '<span class="tag latest">Latest</span>'}<span class="sub">${esc(day(r.date))}</span></div>
-    <ul>${(r.changes || []).map(c => `<li><span class="kind ${esc(c.type)}">${esc(label[c.type] || c.type)}</span><span>${esc(c.text)}</span></li>`).join('')}</ul>
+    ${changeList(r)}
   </article>`).join('') || '<div class="empty">No changes recorded yet.</div>';
 }
 
 function show(t) {
   tab = t;
-  for (const s of ['overview', 'manage', 'store', 'activity', 'changelog']) $('#' + s).classList.toggle('hidden', s !== t);
+  for (const s of ['overview', 'manage', 'store', 'shortcuts', 'activity', 'changelog']) $('#' + s).classList.toggle('hidden', s !== t);
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === (t === 'manage' ? 'overview' : t)));
-  ({ overview: renderOverview, manage: renderManage, store: renderStore, activity: renderJobs, changelog: renderChangelog })[t]();
+  ({ overview: renderOverview, manage: renderManage, store: renderStore, shortcuts: renderShortcuts, activity: renderJobs, changelog: renderChangelog })[t]();
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
 $('#logout').onclick = async () => { await api('logout', {}); location.reload(); };
@@ -613,6 +711,7 @@ $('#logout').onclick = async () => { await api('logout', {}); location.reload();
   catalog = await api('catalog');
   show('overview');
   await refresh(); pollJobs();
+  checkUpdate(); setInterval(checkUpdate, 15 * 60 * 1000);
   setInterval(() => { if (!document.hidden) refresh(); }, 5000);
 })().catch(e => toast(e.message));
 </script>

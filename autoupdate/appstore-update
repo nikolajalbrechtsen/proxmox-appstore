@@ -1,7 +1,10 @@
 #!/bin/sh
-# Runs on the appstore container every minute (see appstore-update.timer).
+# Runs on the appstore container every minute (see appstore-update.timer),
+# or when the Update button is clicked (see appstore-update.path).
 # Pulls the app from GitHub and restarts it when there is a new commit on main.
 set -e
+# The Update button's request. Remove it first, or the path unit starts this script again.
+rm -f /var/lib/appstore/update-request
 cd /opt/appstore
 export GIT_SSH_COMMAND="ssh -i /root/.ssh/appstore_deploy -o IdentitiesOnly=yes"
 git fetch -q origin main

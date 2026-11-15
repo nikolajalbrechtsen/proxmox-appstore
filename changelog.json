@@ -1,5 +1,14 @@
 [
   {
+    "version": "1.8",
+    "date": "2026-11-15",
+    "changes": [
+      { "type": "new", "text": "Shortcuts page: save links you want to keep, each with a name and notes." },
+      { "type": "new", "text": "Update button in the top bar when a newer version of the App Store is on GitHub. It shows what is new, and can install the update for you once set up (see Updating in the README)." },
+      { "type": "improved", "text": "The Manage page shows what the app uses right now: CPU, memory, disk and network traffic." }
+    ]
+  },
+  {
     "version": "1.7",
     "date": "2026-11-15",
     "changes": [

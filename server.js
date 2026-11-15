@@ -112,6 +112,7 @@ async function listGuests() {
     return {
       vmid: g.vmid, name: g.name, type: g.type, status: g.status, cpu: g.cpu || 0, maxcpu: g.maxcpu,
       mem: g.mem || 0, maxmem: g.maxmem, disk: g.disk || 0, maxdisk: g.maxdisk, uptime: g.uptime || 0,
+      netin: g.netin || 0, netout: g.netout || 0,
       tags: g.tags ? g.tags.split(/[;, ]+/).filter(Boolean) : [], ip, url,
       app: app ? app.appId : null, image: app ? app.image : null, self: !!ip && mine.includes(ip), onboot: !!(cfg && cfg.onboot),
     };
@@ -361,6 +362,74 @@ async function saveApp(vmid, b) {
   return { ok: true, envChanged, webChanged };
 }
 
+// ---------- shortcuts (saved links with notes) ----------
+const SHORTCUTS_FILE = path.join(DATA, 'shortcuts.json');
+let shortcuts = readJson(SHORTCUTS_FILE, []);   // [{ id, name, url, notes }]
+function saveShortcut(b) {
+  let url = String(b.url || '').trim();
+  if (url && !/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url;
+  let u; try { u = new URL(url); } catch { throw new Error('Enter a link, for example google.com'); }
+  if (!/^https?:$/.test(u.protocol) || u.href.length > 2000) throw new Error('Links must start with http:// or https://');
+  const s = { id: b.id, name: String(b.name || '').trim().slice(0, 80) || u.hostname.replace(/^www\./, ''), url: u.href, notes: String(b.notes || '').trim().slice(0, 4000) };
+  if (b.id) {
+    const i = shortcuts.findIndex(x => x.id === b.id);
+    if (i < 0) throw new Error('Shortcut not found');
+    shortcuts[i] = s;
+  } else {
+    if (shortcuts.length >= 500) throw new Error('Too many shortcuts');
+    s.id = crypto.randomBytes(6).toString('hex'); shortcuts.push(s);
+  }
+  writeJson(SHORTCUTS_FILE, shortcuts);
+  return s;
+}
+function deleteShortcut(id) { shortcuts = shortcuts.filter(x => x.id !== id); writeJson(SHORTCUTS_FILE, shortcuts); }
+
+// ---------- update check ----------
+// Compares the commit this process was started from with the newest one on GitHub.
+const GIT_DIR = path.join(__dirname, '.git');
+const RUNNING = (() => {
+  try {
+    const head = fs.readFileSync(path.join(GIT_DIR, 'HEAD'), 'utf8').trim(), m = /^ref: (.+)$/.exec(head);
+    if (!m) return head;
+    try { return fs.readFileSync(path.join(GIT_DIR, m[1]), 'utf8').trim(); }
+    catch { const l = fs.readFileSync(path.join(GIT_DIR, 'packed-refs'), 'utf8').split('\n').find(x => x.endsWith(' ' + m[1])); return l ? l.split(' ')[0] : null; }
+  } catch { return null; }
+})();
+const REPO = (() => {
+  try { const m = /^\s*url\s*=.*github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\s*$/m.exec(fs.readFileSync(path.join(GIT_DIR, 'config'), 'utf8')); return m ? m[1] : null; }
+  catch { return null; }
+})();
+const getText = (url, headers = {}) => new Promise((resolve, reject) => {
+  const req = https.get(url, { headers: { 'User-Agent': 'proxmox-appstore', ...headers }, timeout: 10000 }, res => {
+    let d = ''; res.on('data', c => { d += c; if (d.length > 2e6) req.destroy(new Error('Response too large')); });
+    res.on('end', () => res.statusCode === 200 ? resolve(d) : reject(new Error('HTTP ' + res.statusCode)));
+  });
+  req.on('timeout', () => req.destroy(new Error('Timed out'))); req.on('error', reject);
+});
+const update = { t: 0, v: { available: false } };
+async function updateInfo() {
+  if (RUNNING && REPO && Date.now() - update.t > 15 * 60 * 1000) {
+    update.t = Date.now();
+    try {
+      const sha = (await getText(`https://api.github.com/repos/${REPO}/commits/main`, { Accept: 'application/vnd.github.sha' })).trim();
+      if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('Unexpected answer');
+      let releases = [];
+      if (sha !== RUNNING) {
+        // What is new: the versions in the changelog on GitHub that this copy does not have.
+        try {
+          const have = new Set(readJson(path.join(__dirname, 'changelog.json'), []).map(r => r.version));
+          releases = JSON.parse(await getText(`https://raw.githubusercontent.com/${REPO}/${sha}/changelog.json`)).filter(r => !have.has(r.version)).slice(0, 5);
+        } catch {}
+      }
+      update.v = { available: sha !== RUNNING, latest: sha.slice(0, 7), releases };
+    } catch {}   // GitHub unreachable or a private repository: keep the last answer
+  }
+  // How an update gets installed here depends on which systemd units are enabled in this container.
+  const enabled = n => fs.existsSync('/etc/systemd/system/' + n);
+  const mode = enabled('paths.target.wants/appstore-update.path') ? 'button' : enabled('timers.target.wants/appstore-update.timer') ? 'auto' : 'manual';
+  return { ...update.v, running: RUNNING ? RUNNING.slice(0, 7) : null, mode };
+}
+
 // ---------- setup / auth ----------
 const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 32).toString('hex');
 async function setup(b) {
@@ -417,6 +486,18 @@ async function api(req, res, url) {
   if (p === '/api/catalog' && M === 'GET') return send(res, 200, catalog);
   if (p === '/api/jobs' && M === 'GET') return send(res, 200, jobs);
   if (p === '/api/changelog' && M === 'GET') return send(res, 200, readJson(path.join(__dirname, 'changelog.json'), []));
+  if (p === '/api/update' && M === 'GET') return send(res, 200, await updateInfo());
+  if (p === '/api/update' && M === 'POST') {
+    // The appstore-update.path unit (run by root) sees this file and installs the update.
+    await readBody(req);
+    const u = await updateInfo();
+    if (u.mode === 'button') fs.writeFileSync(path.join(DATA, 'update-request'), '');
+    return send(res, 200, u);
+  }
+  if (p === '/api/shortcuts' && M === 'GET') return send(res, 200, shortcuts);
+  if (p === '/api/shortcuts' && M === 'POST') return send(res, 200, saveShortcut(await readBody(req)));
+  const sd = /^\/api\/shortcuts\/([a-f0-9]{12})\/delete$/.exec(p);
+  if (sd && M === 'POST') { await readBody(req); deleteShortcut(sd[1]); return send(res, 200, { ok: true }); }
   if (p === '/api/options' && M === 'GET') {
     // Choices for the advanced install form.
     const [st, br, nextid] = await Promise.all([

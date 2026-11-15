@@ -4,6 +4,7 @@ A small web UI for a Proxmox VE host that runs in its own LXC container.
 
 - **My apps** – see all your containers and virtual machines with status, CPU, memory and IP address. Start, stop, restart and delete them.
 - **Store** – install an app with one click. Each app becomes a new container created from a Docker/OCI image. About 200 apps are included (Jellyfin, Uptime Kuma, Vaultwarden, Nextcloud, n8n and more), and you can install any other image with "Custom image".
+- **Shortcuts** – save links you want to keep, each with a name and notes.
 
 It has no dependencies beyond Node.js, and it talks to Proxmox with a limited API token, not your root password.
 
@@ -100,7 +101,7 @@ Click an app card in the **Store** to see what it is, with screenshots where the
 
 ## Managing an app
 
-**Manage** on a card under **My apps** opens a page for that app:
+**Manage** on a card under **My apps** opens a page for that app. The top of the page shows what the app uses right now: CPU, memory, disk and network traffic.
 
 - **Container settings** – name, CPU cores, memory, swap, disk size (it can only grow), network bridge, DHCP or a static IP address, and start at boot. Virtual machines get name, CPU cores, memory and start at boot.
 - **App settings** – the app's environment variables, and the port, path and HTTPS setting used by the **Open** button. Environment changes take effect when the app restarts; the page offers to restart it for you.
@@ -116,11 +117,23 @@ Click an app card in the **Store** to see what it is, with screenshots where the
 
 ## Updating
 
+When a newer version is on GitHub, an **Update** button appears in the top bar. It lists what is new. The App Store looks for updates every 15 minutes by asking GitHub for the newest commit of the repository you cloned; a private repository cannot be checked this way, so the button never appears for one.
+
 Update manually, in the App Store container's console:
 
 ```sh
 cd /opt/appstore && git pull && systemctl restart appstore
 ```
+
+Or let the **Update** button install the update. Run this once in the container's console:
+
+```sh
+cp /opt/appstore/autoupdate/appstore-update /usr/local/bin/ && chmod +x /usr/local/bin/appstore-update
+cp /opt/appstore/autoupdate/appstore-update.service /opt/appstore/autoupdate/appstore-update.path /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now appstore-update.path
+```
+
+The app itself runs without root rights and cannot replace its own files. Clicking **Update now** leaves a request in `/var/lib/appstore`, and this unit runs the update as root when it sees it. If you already set up automatic updates before version 1.8, run these commands too: they also replace the older update script.
 
 Or update automatically. This makes the container check GitHub every minute and restart the app when `main` changes:
 

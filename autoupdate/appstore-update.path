@@ -1,0 +1,9 @@
+[Unit]
+Description=Update the App Store when the Update button is clicked
+
+[Path]
+PathExists=/var/lib/appstore/update-request
+Unit=appstore-update.service
+
+[Install]
+WantedBy=paths.target
