@@ -98,6 +98,13 @@ Click an app card in the **Store** to see what it is, with screenshots where the
 - a static IP address and gateway instead of DHCP
 - swap, extra environment variables, and whether the app starts at boot or right after installing
 
+## Managing an app
+
+**Manage** on a card under **My apps** opens a page for that app:
+
+- **Container settings** – name, CPU cores, memory, swap, disk size (it can only grow), network bridge, DHCP or a static IP address, and start at boot. Virtual machines get name, CPU cores, memory and start at boot.
+- **App settings** – the app's environment variables, and the port, path and HTTPS setting used by the **Open** button. Environment changes take effect when the app restarts; the page offers to restart it for you.
+
 ## Good to know
 
 - **The App Store's address comes from DHCP** and can change. Reserve it in your router, or give the container a static IP.

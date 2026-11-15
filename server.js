@@ -146,7 +146,7 @@ function queueInstall(body) {
   // Advanced options: every one is optional and falls back to the simple default.
   const image = normImage(adv.image || app.image);
   const opt = { storage: P.storage, bridge: P.bridge, ip: 'dhcp', gw: '', swap: 0, onboot: 1, start: true, vmid: null };
-  const ipv4 = '(25[0-5]|2[0-4]\\d|1?\\d?\\d)(\\.(25[0-5]|2[0-4]\\d|1?\\d?\\d)){3}';
+  const ipv4 = IPV4;
   if (adv.storage) { if (!/^[A-Za-z][\w.-]*$/.test(adv.storage)) throw new Error('Invalid storage'); opt.storage = adv.storage; }
   if (adv.bridge) { if (!/^[A-Za-z][\w.-]*$/.test(adv.bridge)) throw new Error('Invalid network bridge'); opt.bridge = adv.bridge; }
   if (adv.ip && adv.ip !== 'dhcp') {
@@ -263,29 +263,102 @@ async function guestAction(type, vmid, action) {
   cache.clear();
 }
 
-// ---------- guest settings (Manage dialog) ----------
-// Without a body: returns the current settings. With one: applies the values that changed.
-async function guestSettings(type, vmid, b) {
+// ---------- guest settings (Manage page) ----------
+const IPV4 = '(25[0-5]|2[0-4]\\d|1?\\d?\\d)(\\.(25[0-5]|2[0-4]\\d|1?\\d?\\d)){3}';
+// "a=1,b=2" property strings, as Proxmox uses for net0 and rootfs.
+const parseKv = str => Object.fromEntries(String(str || '').split(',').filter(Boolean).map(p => { const i = p.indexOf('='); return i < 0 ? [p, ''] : [p.slice(0, i), p.slice(i + 1)]; }));
+const joinKv = o => Object.entries(o).map(([k, v]) => v === '' ? k : `${k}=${v}`).join(',');
+const parseEnv = str => String(str || '').split('\0').filter(Boolean).map(kv => { const i = kv.indexOf('='); return i < 0 ? [kv, ''] : [kv.slice(0, i), kv.slice(i + 1)]; });
+const int = (v, min, max, what) => { const n = Number(v); if (v === '' || v == null || !(Number.isInteger(n) && n >= min && n <= max)) throw new Error(`${what} must be a whole number from ${min} to ${max}`); return n; };
+
+async function guestSettings(type, vmid) {
   const data = await listGuests();
   const g = data.guests.find(x => String(x.vmid) === vmid && x.type === type);
   if (!g) throw new Error('Guest not found');
-  const base = `${node()}/${type}/${vmid}`, cfg = await pve('GET', base + '/config');
-  const sockets = type === 'qemu' ? Number(cfg.sockets) || 1 : 1;
-  const cur = {
+  const lxc = type === 'lxc', cfg = await pve('GET', `${node()}/${type}/${vmid}/config`);
+  const sockets = lxc ? 1 : Number(cfg.sockets) || 1;
+  const s = {
+    self: g.self, sockets, hostCores: data.host.maxcpu || 64,
+    name: (lxc ? cfg.hostname : cfg.name) || g.name,
     cores: cfg.cores ? cfg.cores * sockets : g.maxcpu,   // a container without a limit uses every host core
     memory: Number((/\d+/.exec(String(cfg.memory ?? '')) || [512])[0]),
     onboot: !!Number(cfg.onboot),
   };
-  if (!b) return cur;
-  if (g.self) throw new Error('This is the App Store itself - manage it from the Proxmox UI.');
-  const int = (v, min, max, what) => { const n = Number(v); if (!(Number.isInteger(n) && n >= min && n <= max)) throw new Error(`${what} must be a whole number from ${min} to ${max}`); return n; };
-  const cores = int(b.cores, 1, data.host.maxcpu || 64, 'CPU cores'), memory = int(b.memory, 64, 262144, 'Memory');
+  if (lxc) {
+    s.swap = Number(cfg.swap ?? 512);
+    const m = /size=(\d+(?:\.\d+)?)([MGT])/.exec(cfg.rootfs || '');
+    s.disk = m ? m[1] * { M: 1 / 1024, G: 1, T: 1024 }[m[2]] : null;   // GB
+    if (cfg.net0) { s.net0 = parseKv(cfg.net0); s.net = { bridge: s.net0.bridge || '', ip: s.net0.ip || '', gw: s.net0.gw || '' }; }
+    s.envRaw = cfg.env || ''; s.env = parseEnv(cfg.env);
+    const app = apps[vmid] || {};
+    s.image = app.image || null;
+    s.web = { port: Number(app.port) || 0, path: app.path || '', https: !!app.https };
+  }
+  return s;
+}
+
+// Container settings tab: applies only the values that differ from the current ones.
+async function saveContainer(type, vmid, b) {
+  const cur = await guestSettings(type, vmid), lxc = type === 'lxc', base = `${node()}/${type}/${vmid}`;
+  if (cur.self) throw new Error('This is the App Store itself - manage it from the Proxmox UI.');
   const set = {};
-  if (cores !== cur.cores) { set.cores = cores; if (sockets > 1) set.sockets = 1; }
+  const name = String(b.name ?? cur.name).trim();
+  if (!/^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,61}[a-zA-Z0-9])?$/.test(name)) throw new Error('Name may only contain letters, digits, "-" and "."');
+  if (name !== cur.name) set[lxc ? 'hostname' : 'name'] = name;
+  const cores = int(b.cores, 1, cur.hostCores, 'CPU cores'), memory = int(b.memory, 64, 262144, 'Memory');
+  if (cores !== cur.cores) { set.cores = cores; if (cur.sockets > 1) set.sockets = 1; }
   if (memory !== cur.memory) set.memory = memory;
   if (!!b.onboot !== cur.onboot) set.onboot = b.onboot ? 1 : 0;
-  if (Object.keys(set).length) { await pve('PUT', base + '/config', set); cache.clear(); }
-  return { ok: true, changed: Object.keys(set).length };
+  let grow = 0;
+  if (lxc) {
+    if (b.swap !== undefined) { const swap = int(b.swap, 0, 262144, 'Swap'); if (swap !== cur.swap) set.swap = swap; }
+    if (b.net && cur.net0) {
+      const n = { ...cur.net0 }, want = b.net;
+      if (want.bridge) { if (!/^[A-Za-z][\w.-]*$/.test(want.bridge)) throw new Error('Invalid network bridge'); n.bridge = want.bridge; }
+      if (want.ip === 'dhcp') { n.ip = 'dhcp'; delete n.gw; }
+      else if (want.ip && want.ip !== 'keep') {
+        if (!new RegExp(`^${IPV4}/([1-9]|[12]\\d|3[0-2])$`).test(want.ip)) throw new Error('Static address must look like 192.168.1.50/24');
+        if (want.gw && !new RegExp(`^${IPV4}$`).test(want.gw)) throw new Error('Gateway must be an IP address like 192.168.1.1');
+        n.ip = want.ip; if (want.gw) n.gw = want.gw; else delete n.gw;
+      }
+      if (joinKv(n) !== joinKv(cur.net0)) set.net0 = joinKv(n);
+    }
+    if (cur.disk != null && b.disk !== undefined && b.disk !== '') {
+      const d = int(b.disk, 1, 2000, 'Disk size');
+      if (d < Math.floor(cur.disk)) throw new Error('A disk can only be made larger');
+      if (d > Math.ceil(cur.disk)) grow = d;
+    }
+  }
+  if (Object.keys(set).length) await pve('PUT', base + '/config', set);
+  if (grow) { const up = await pve('PUT', base + '/resize', { disk: 'rootfs', size: grow + 'G' }); if (typeof up === 'string' && up.startsWith('UPID')) await waitTask(up, 5 * 60 * 1000); }
+  cache.clear();
+  return { ok: true, changed: Object.keys(set).length + (grow ? 1 : 0) };
+}
+
+// App settings tab: environment variables and the link behind the Open button.
+async function saveApp(vmid, b) {
+  const cur = await guestSettings('lxc', vmid);
+  if (cur.self) throw new Error('This is the App Store itself - manage it from the Proxmox UI.');
+  let envChanged = false, webChanged = false;
+  if (b.env) {
+    const list = [];
+    for (const [k, v] of Object.entries(b.env)) {
+      if (!/^\w+$/.test(k) || /[\x00-\x1f\x7f]/.test(String(v))) throw new Error('Invalid environment variable: ' + k);
+      list.push(`${k}=${v}`);
+    }
+    const env = list.join('\0');
+    if (env !== cur.envRaw) { await pve('PUT', `${node()}/lxc/${vmid}/config`, env ? { env } : { delete: 'env' }); envChanged = true; }
+  }
+  if (b.web) {
+    const port = int(b.web.port || 0, 0, 65535, 'Web port'), p = String(b.web.path || '').trim(), https = !!b.web.https;
+    if (!/^(\/[^\s"'<>]*)?$/.test(p)) throw new Error('Path must start with "/"');
+    if (port !== cur.web.port || p !== cur.web.path || https !== cur.web.https) {
+      apps[vmid] = { appId: 'custom', name: cur.name, image: null, ...apps[vmid], port, path: p, https };
+      writeJson(APPS_FILE, apps); webChanged = true;
+    }
+  }
+  cache.clear();
+  return { ok: true, envChanged, webChanged };
 }
 
 // ---------- setup / auth ----------
@@ -361,9 +434,14 @@ async function api(req, res, url) {
   if (p === '/api/install' && M === 'POST') return send(res, 200, queueInstall(await readBody(req)));
   const m = /^\/api\/guests\/(lxc|qemu)\/(\d+)\/(start|stop|shutdown|reboot|delete)$/.exec(p);
   if (m && M === 'POST') { await readBody(req); await guestAction(m[1], m[2], m[3]); return send(res, 200, { ok: true }); }
-  const c = /^\/api\/guests\/(lxc|qemu)\/(\d+)\/config$/.exec(p);
-  if (c && M === 'GET') return send(res, 200, await guestSettings(c[1], c[2]));
-  if (c && M === 'POST') return send(res, 200, await guestSettings(c[1], c[2], await readBody(req)));
+  const c = /^\/api\/guests\/(lxc|qemu)\/(\d+)\/(config|app)$/.exec(p);
+  if (c && c[3] === 'config' && M === 'GET') {
+    const s = await guestSettings(c[1], c[2]);
+    if (c[1] === 'lxc') s.bridges = (await pve('GET', node() + '/network', { type: 'bridge' }).catch(() => [])).map(x => x.iface);
+    return send(res, 200, s);
+  }
+  if (c && c[3] === 'config' && M === 'POST') return send(res, 200, await saveContainer(c[1], c[2], await readBody(req)));
+  if (c && c[3] === 'app' && c[1] === 'lxc' && M === 'POST') return send(res, 200, await saveApp(c[2], await readBody(req)));
   send(res, 404, { error: 'Not found' });
 }
 

@@ -108,7 +108,19 @@ details.adv[open] summary{margin-bottom:6px}
 .info code{font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
 .modal a{color:var(--accent)}
 .three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-.modal .end{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.end{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.mhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.mhead .name{font-size:18px}
+.mhead .actions{margin:0}
+.subtabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;overflow-x:auto}
+.subtabs button{background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:8px 12px;cursor:pointer;color:var(--muted);font-weight:600;white-space:nowrap}
+.subtabs button.on{color:var(--text);border-color:var(--accent)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:18px;max-width:760px}
+.panel h3{margin:20px 0 10px;font-size:14px}
+.panel h3:first-child{margin-top:0}
+.panel p{color:var(--muted);margin:0 0 12px;font-size:13px}
+.panel .info{margin-top:0}
+@media (max-width:560px){.three{grid-template-columns:1fr 1fr}}
 .err{color:var(--bad);font-size:13px;min-height:18px;margin:4px 0}
 pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:0 0 12px}
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:9px 16px;border-radius:9px;font-weight:600;z-index:30;max-width:90vw}
@@ -148,6 +160,11 @@ pre{background:var(--panel2);border-radius:8px;padding:10px;font-size:11.5px;ove
       <select id="gf" aria-label="Filter"><option value="">All</option><option value="running">Running</option><option value="stopped">Stopped</option><option value="lxc">Containers</option><option value="qemu">Virtual machines</option></select>
     </div>
     <div class="grid" id="guests"></div>
+  </section>
+  <section id="manage" class="hidden">
+    <div class="mhead" id="mhead"></div>
+    <div class="subtabs" id="mtabs"></div>
+    <div id="mbody"></div>
   </section>
   <section id="store" class="hidden">
     <div class="tools">
@@ -228,6 +245,16 @@ function showLogin() {
 }
 
 // ---------- overview ----------
+const catOf = g => catalog.find(a => a.id === g.app) || catalog.find(a => g.name.includes(a.id));
+const guestIcon = g => { const c = catOf(g); return icon(c ? c.icon : g.name.replace(/[^a-z0-9-]/g, ''), g.name); };
+const guestState = g => busy[g.vmid] ? '<div class="spin"></div>' : `<span class="dot ${esc(g.status)}">${g.status === 'running' ? 'Running' : 'Stopped'}</span>`;
+// Open / Start / Restart / Stop / Delete buttons, shared by the cards and the Manage page.
+function guestButtons(g, manage) {
+  const on = g.status === 'running';
+  const a = (act, label, cls = '') => `<button class="btn sm ${cls}" data-act="${act}" data-id="${g.vmid}" ${busy[g.vmid] || (g.self && act !== 'start' && act !== 'manage') ? 'disabled' : ''}>${label}</button>`;
+  return (g.url && on ? `<a class="btn sm primary" href="${esc(g.url)}" target="_blank" rel="noopener">Open</a>` : '')
+    + (on ? a('reboot', 'Restart') + a('shutdown', 'Stop') : a('start', 'Start')) + (manage ? a('manage', 'Manage') : '') + (on ? '' : a('delete', 'Delete', 'danger'));
+}
 function renderOverview() {
   if (!data) return;
   const h = data.host, st = data.storages;
@@ -242,24 +269,19 @@ function renderOverview() {
   const q = $('#gq').value.toLowerCase(), f = $('#gf').value;
   const list = data.guests.filter(g => (!q || [g.name, g.vmid, g.ip, ...g.tags].join(' ').toLowerCase().includes(q)) && (!f || g.status === f || g.type === f));
   const card = g => {
-    const on = g.status === 'running', b = busy[g.vmid];
-    const cat = catalog.find(a => a.id === g.app) || catalog.find(a => g.name.includes(a.id));
-    const a = (act, label, cls = '') => `<button class="btn sm ${cls}" data-act="${act}" data-id="${g.vmid}" ${b || (g.self && act !== 'start') ? 'disabled' : ''}>${label}</button>`;
+    const on = g.status === 'running';
     return `<div class="card ${on ? '' : 'off'}">
-      <div class="row">${icon(cat ? cat.icon : g.name.replace(/[^a-z0-9-]/g, ''), g.name)}
+      <div class="row">${guestIcon(g)}
         <div class="grow"><div class="name">${esc(g.name)}</div>
           <div class="sub">${g.type === 'lxc' ? 'Container' : 'VM'} ${g.vmid}${g.ip ? ' · ' + esc(g.ip) : ''}${on ? ' · up ' + upt(g.uptime) : ''}</div></div>
-        ${b ? '<div class="spin"></div>' : `<span class="dot ${esc(g.status)}">${on ? 'Running' : 'Stopped'}</span>`}
+        ${guestState(g)}
       </div>
       <div class="mini">
         <div><span><b>CPU</b>${on ? (g.cpu * 100).toFixed(1) + '%' : '–'} · ${g.maxcpu} core${g.maxcpu > 1 ? 's' : ''}</span>${meter(on ? g.cpu * 100 : 0)}</div>
         <div><span><b>Memory</b>${on ? bytes(g.mem) + ' / ' : ''}${bytes(g.maxmem)}</span>${meter(on ? pct(g.mem, g.maxmem) : 0)}</div>
       </div>
       ${g.tags.length || g.self ? `<div class="tags">${g.self ? '<span class="tag">this app store</span>' : ''}${g.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
-      <div class="actions">
-        ${g.url && on ? `<a class="btn sm primary" href="${esc(g.url)}" target="_blank" rel="noopener">Open</a>` : ''}
-        ${on ? a('reboot', 'Restart') + a('shutdown', 'Stop') : a('start', 'Start')}${a('manage', 'Manage')}${on ? '' : a('delete', 'Delete', 'danger')}
-      </div></div>`;
+      <div class="actions">${guestButtons(g, true)}</div></div>`;
   };
   // Apps (containers) first, then virtual machines, each under its own heading.
   const group = (title, items) => items.length ? `<h2 class="group">${title} <small>${items.length}</small></h2>` + items.map(card).join('') : '';
@@ -267,13 +289,15 @@ function renderOverview() {
     || '<div class="empty">Nothing matches.</div>';
 }
 async function refresh() {
-  try { data = await api('guests'); if (tab === 'overview') renderOverview(); } catch (e) { if (!data) toast(e.message); }
+  try { data = await api('guests'); if (tab === 'overview') renderOverview(); if (tab === 'manage') renderManageHead(); } catch (e) { if (!data) toast(e.message); }
 }
-$('#guests').onclick = e => {
+$('#guests').onclick = $('#mhead').onclick = e => {
+  if (e.target.closest('[data-back]')) return show('overview');
   const b = e.target.closest('[data-act]'); if (!b) return;
   const g = data.guests.find(x => x.vmid == b.dataset.id), act = b.dataset.act;
+  if (!g) return;
   if (act === 'start') return doAction(g, act);
-  if (act === 'manage') return manageDialog(g);
+  if (act === 'manage') return openManage(g);
   if (act === 'delete') return modal(`<h2>Delete ${esc(g.name)}?</h2>
     <p>This permanently destroys ${g.type === 'lxc' ? 'container' : 'virtual machine'} ${g.vmid} and all of its data. This cannot be undone.</p>
     <div class="field"><label>Type <b>${esc(g.name)}</b> to confirm</label><input name="c" autocomplete="off" autofocus></div><div class="err"></div>
@@ -284,38 +308,136 @@ $('#guests').onclick = e => {
     async () => { closeModal(); doAction(g, act); });
 };
 async function doAction(g, act) {
-  busy[g.vmid] = 1; renderOverview();
+  busy[g.vmid] = 1; renderOverview(); if (tab === 'manage') renderManageHead();
   try { await api(`guests/${g.type}/${g.vmid}/${act}`, {}); toast(`${g.name}: ${{ start: 'started', shutdown: 'stopped', reboot: 'restarted', delete: 'deleted' }[act]}`); }
   catch (e) { toast(e.message); }
   delete busy[g.vmid]; await refresh();
 }
-// Popup with details and editable settings for one installed app or VM.
-async function manageDialog(g) {
-  let s; try { s = await api(`guests/${g.type}/${g.vmid}/config`); } catch (e) { return toast(e.message); }
-  const on = g.status === 'running', vm = g.type === 'qemu';
-  const cat = catalog.find(a => a.id === g.app) || catalog.find(a => g.name.includes(a.id));
-  modal(`<div class="row" style="margin-bottom:14px">${icon(cat ? cat.icon : g.name.replace(/[^a-z0-9-]/g, ''), g.name)}
-      <div class="grow"><h2>Manage ${esc(g.name)}</h2><div class="sub">${vm ? 'Virtual machine' : 'Container'} ${g.vmid}${cat ? ' · ' + esc(cat.name) : ''}</div></div></div>
-    <dl class="info">
-      <dt>Status</dt><dd>${on ? 'Running · up ' + upt(g.uptime) : 'Stopped'}</dd>
-      ${g.ip ? `<dt>Address</dt><dd>${g.url ? `<a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.ip)}</a>` : esc(g.ip)}</dd>` : ''}
-      ${g.image ? `<dt>Docker image</dt><dd><code>${esc(g.image)}</code></dd>` : ''}
-      ${g.maxdisk ? `<dt>Disk</dt><dd>${vm ? bytes(g.maxdisk) : bytes(g.disk) + ' of ' + bytes(g.maxdisk) + ' used'}</dd>` : ''}
-    </dl>
-    <div class="two">
-      <div class="field"><label>CPU cores</label><input name="cores" type="number" min="1" max="${data.host.maxcpu || 64}" value="${s.cores}" required></div>
-      <div class="field"><label>Memory (MB)</label><input name="memory" type="number" min="64" step="64" value="${s.memory}" required></div>
-    </div>
-    <label class="check"><input type="checkbox" name="onboot" ${s.onboot ? 'checked' : ''}> Start automatically when the Proxmox host boots</label>
-    ${vm && on ? '<p>CPU and memory changes to a running virtual machine take effect after its next restart.</p>' : ''}
-    <div class="err"></div>
-    <div class="end"><button class="btn" type="button" data-close>Close</button><button class="btn primary" type="submit">Save</button></div>`,
-    async v => {
-      const r = await api(`guests/${g.type}/${g.vmid}/config`, { cores: v.cores, memory: v.memory, onboot: 'onboot' in v });
-      closeModal(); toast(`${g.name}: ${r.changed ? 'settings saved' : 'nothing changed'}`); refresh();
-    });
-}
 $('#gq').oninput = $('#gf').onchange = renderOverview;
+
+// ---------- manage page ----------
+// One installed app or VM: its settings, loaded from Proxmox when the page opens.
+let mg = null;   // { type, vmid, tab, s: settings, err }
+const mguest = () => mg && data && data.guests.find(x => x.vmid == mg.vmid && x.type === mg.type);
+async function openManage(g) {
+  mg = { type: g.type, vmid: g.vmid, tab: 'container', s: null, err: null };
+  show('manage');
+  await loadManage();
+}
+async function loadManage() {
+  const me = mg; if (!me) return;
+  try { const s = await api(`guests/${me.type}/${me.vmid}/config`); me.s = s; me.err = null; }
+  catch (e) { me.err = e.message; }
+  if (mg === me && tab === 'manage') renderManageBody();
+}
+function renderManage() { renderManageHead(); renderManageBody(); }
+// The header follows the live status; the form below is only redrawn on load, tab change and save, so typing is never lost.
+function renderManageHead() {
+  const g = mguest();
+  if (!g) { mg = null; return show('overview'); }
+  $('#mhead').innerHTML = `<button class="btn sm" type="button" data-back>← My apps</button>${guestIcon(g)}
+    <div class="grow"><div class="name">${esc(g.name)}</div>
+      <div class="sub">${g.type === 'lxc' ? 'Container' : 'VM'} ${g.vmid}${g.ip ? ' · ' + esc(g.ip) : ''}${g.status === 'running' ? ' · up ' + upt(g.uptime) : ''}</div></div>
+    ${guestState(g)}<div class="actions">${guestButtons(g, false)}</div>`;
+}
+function renderManageBody() {
+  const g = mguest(); if (!g) return;
+  const lxc = g.type === 'lxc', s = mg.s;
+  $('#mtabs').innerHTML = [['container', lxc ? 'Container settings' : 'Settings'], ...(lxc ? [['app', 'App settings']] : [])]
+    .map(([k, l]) => `<button type="button" data-mtab="${k}" class="${mg.tab === k ? 'on' : ''}">${l}</button>`).join('');
+  if (!s) { $('#mbody').innerHTML = `<div class="empty">${mg.err ? esc(mg.err) : 'Loading…'}</div>`; return; }
+  $('#mbody').innerHTML = `<form class="panel">${mg.tab === 'app' ? appForm(g, s) : containerForm(g, s)}
+    ${g.self ? '<p>This is the App Store itself. Change its settings in the Proxmox UI.</p>' : ''}
+    <div class="err"></div><div class="end"><button class="btn primary" type="submit" ${g.self ? 'disabled' : ''}>Save</button></div></form>`;
+  const f = $('#mbody form'), mode = f.elements.mode;
+  if (mode) mode.onchange = () => $('#mStatic').classList.toggle('hidden', mode.value !== 'static');
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const btn = f.querySelector('[type=submit]'), err = f.querySelector('.err');
+    btn.disabled = true; err.textContent = '';
+    try { await (mg.tab === 'app' ? saveApp : saveContainer)(g, Object.fromEntries(new FormData(f))); }
+    catch (x) { err.textContent = x.message; btn.disabled = false; }
+  };
+}
+$('#mtabs').onclick = e => { const b = e.target.closest('[data-mtab]'); if (b && mg) { mg.tab = b.dataset.mtab; renderManageBody(); } };
+
+function containerForm(g, s) {
+  const lxc = g.type === 'lxc', on = g.status === 'running';
+  const num = (label, name, value, attrs) => `<div class="field"><label>${label}</label><input name="${name}" type="number" value="${esc(value)}" ${attrs} required></div>`;
+  let net = '';
+  if (lxc && s.net) {
+    const cur = s.net.ip === 'dhcp' ? 'dhcp' : /^\d+\.\d+\.\d+\.\d+\/\d+$/.test(s.net.ip) ? 'static' : 'keep';
+    const bridges = [...new Set([s.net.bridge, ...(s.bridges || [])].filter(Boolean))];
+    const opt = (v, l) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`;
+    net = `<h3>Network</h3>
+      <div class="two">
+        <div class="field"><label>Network bridge</label><select name="bridge">${bridges.map(b => `<option ${b === s.net.bridge ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>
+        <div class="field"><label>IP address</label><select name="mode">${opt('dhcp', 'Automatic (DHCP)')}${opt('static', 'Static address')}${cur === 'keep' ? opt('keep', 'Leave as it is') : ''}</select></div>
+      </div>
+      <div class="two ${cur === 'static' ? '' : 'hidden'}" id="mStatic">
+        <div class="field"><label>Address with prefix</label><input name="ip" value="${cur === 'static' ? esc(s.net.ip) : ''}" placeholder="192.168.1.50/24"></div>
+        <div class="field"><label>Gateway</label><input name="gw" value="${esc(s.net.gw)}" placeholder="192.168.1.1"></div>
+      </div>
+      <p>${g.ip ? 'Current address: ' + esc(g.ip) + '. ' : ''}Changing the network can disconnect the app for a moment.</p>`;
+  }
+  return `<h3>General</h3>
+    <div class="field"><label>Name</label><input name="name" value="${esc(s.name)}" pattern="[A-Za-z0-9]([A-Za-z0-9.\\-]*[A-Za-z0-9])?" maxlength="63" required></div>
+    <label class="check"><input type="checkbox" name="onboot" ${s.onboot ? 'checked' : ''}> Start automatically when the Proxmox host boots</label>
+    <h3>Resources</h3>
+    <div class="${lxc ? 'three' : 'two'}">
+      ${num('CPU cores', 'cores', s.cores, `min="1" max="${s.hostCores}"`)}
+      ${num('Memory (MB)', 'memory', s.memory, 'min="64" step="64"')}
+      ${lxc ? num('Swap (MB)', 'swap', s.swap, 'min="0" step="64"') : ''}
+    </div>
+    ${lxc && s.disk != null ? `${num('Disk size (GB)', 'disk', Math.ceil(s.disk), `min="${Math.ceil(s.disk)}" max="2000"`)}
+      <p>${g.maxdisk ? bytes(g.disk) + ' of ' + bytes(g.maxdisk) + ' used. ' : ''}A disk can be made larger, but not smaller.</p>` : ''}
+    ${net}
+    <p>${lxc ? 'CPU, memory and swap changes apply right away. A new name shows up inside the app after a restart.' : on ? 'CPU and memory changes take effect after the next restart of the virtual machine.' : ''}</p>`;
+}
+async function saveContainer(g, v) {
+  const body = { name: v.name, cores: v.cores, memory: v.memory, onboot: 'onboot' in v };
+  if (g.type === 'lxc') {
+    body.swap = v.swap; if ('disk' in v) body.disk = v.disk;
+    if ('mode' in v) {
+      if (v.mode === 'static' && !v.ip.trim()) throw new Error('Enter the static address, for example 192.168.1.50/24');
+      body.net = { bridge: v.bridge, ip: v.mode === 'static' ? v.ip.trim() : v.mode, gw: v.mode === 'static' ? v.gw.trim() : '' };
+    }
+  }
+  const r = await api(`guests/${g.type}/${g.vmid}/config`, body);
+  toast(`${v.name}: ${r.changed ? 'settings saved' : 'nothing changed'}`);
+  await loadManage(); refresh();
+}
+
+function appForm(g, s) {
+  const known = ((catalog.find(a => a.id === g.app) || {}).env || []), env = new Map(s.env);
+  const rest = s.env.filter(([k]) => !known.some(v => v.key === k));
+  return `${s.image ? `<dl class="info"><dt>Docker image</dt><dd><code>${esc(s.image)}</code></dd></dl>` : ''}
+    <h3>Settings</h3>
+    ${known.map(v => `<div class="field"><label>${esc(v.label || v.key)}</label><input name="env:${esc(v.key)}" value="${esc(env.get(v.key) ?? '')}" autocomplete="off"></div>`).join('')}
+    <div class="field"><label>${known.length ? 'Other environment' : 'Environment'} variables, one KEY=value per line</label>
+      <textarea name="extra" spellcheck="false" style="min-height:${Math.min(320, 60 + rest.length * 19)}px" placeholder="TZ=Europe/Copenhagen">${esc(rest.map(([k, val]) => k + '=' + val).join('\n'))}</textarea></div>
+    <p>The app reads these when it starts. Some come from the Docker image itself, such as PATH; leave those alone unless you know what they do.</p>
+    <h3>Open button</h3>
+    <div class="two">
+      <div class="field"><label>Web port (0 if the app has no web page)</label><input name="port" type="number" min="0" max="65535" value="${s.web.port}" required></div>
+      <div class="field"><label>Path</label><input name="path" value="${esc(s.web.path)}" placeholder="/"></div>
+    </div>
+    <label class="check"><input type="checkbox" name="https" ${s.web.https ? 'checked' : ''}> The web page only answers on HTTPS</label>
+    ${g.status === 'running' ? '<label class="check"><input type="checkbox" name="restart" checked> Restart the app after saving, so changed settings take effect</label>' : ''}`;
+}
+async function saveApp(g, v) {
+  const env = {};
+  for (const k in v) if (k.startsWith('env:') && v[k] !== '') env[k.slice(4)] = v[k];
+  for (const line of v.extra.split('\n').map(l => l.trim()).filter(Boolean)) {
+    const m = /^(\w+)=(.*)$/.exec(line); if (!m) throw new Error(`"${line}" is not in the form KEY=value`);
+    env[m[1]] = m[2];
+  }
+  const r = await api(`guests/lxc/${g.vmid}/app`, { env, web: { port: v.port, path: v.path.trim(), https: 'https' in v } });
+  const restart = r.envChanged && 'restart' in v;
+  toast(`${g.name}: ${r.envChanged || r.webChanged ? 'settings saved' : 'nothing changed'}${restart ? ', restarting' : r.envChanged ? '. Restart the app to use them' : ''}`);
+  await loadManage();
+  if (restart) doAction(g, 'reboot'); else refresh();
+}
 
 // ---------- store ----------
 function renderStore() {
@@ -476,9 +598,9 @@ async function renderChangelog() {
 
 function show(t) {
   tab = t;
-  for (const s of ['overview', 'store', 'activity', 'changelog']) $('#' + s).classList.toggle('hidden', s !== t);
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  ({ overview: renderOverview, store: renderStore, activity: renderJobs, changelog: renderChangelog })[t]();
+  for (const s of ['overview', 'manage', 'store', 'activity', 'changelog']) $('#' + s).classList.toggle('hidden', s !== t);
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === (t === 'manage' ? 'overview' : t)));
+  ({ overview: renderOverview, manage: renderManage, store: renderStore, activity: renderJobs, changelog: renderChangelog })[t]();
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
 $('#logout').onclick = async () => { await api('logout', {}); location.reload(); };

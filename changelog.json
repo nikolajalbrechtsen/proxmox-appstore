@@ -1,5 +1,13 @@
 [
   {
+    "version": "1.7",
+    "date": "2026-11-15",
+    "changes": [
+      { "type": "new", "text": "Manage now opens a full page for each app. Container settings: name, CPU cores, memory, swap, disk size, network bridge and IP address, start on boot." },
+      { "type": "new", "text": "App settings on the Manage page: change an app's environment variables and the port, path and HTTPS setting behind its Open button, then restart it in one go." }
+    ]
+  },
+  {
     "version": "1.6",
     "date": "2026-11-15",
     "changes": [
