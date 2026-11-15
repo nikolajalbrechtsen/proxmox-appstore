@@ -249,6 +249,13 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.auth
 
 // ---------- setup & login ----------
 function showSetup() {
+  // Installed with install.sh: the connection to Proxmox is already prepared, only the password is missing.
+  if (state.preseeded) return modal(`<h2>Welcome to App Store</h2>
+    <p>The installer has already connected it to Proxmox. Choose a password to finish. You sign in to the App Store with it.</p>
+    <div class="field"><label>Password</label><input name="password" type="password" minlength="8" required autocomplete="new-password" autofocus></div>
+    <div class="err"></div>
+    <div class="end"><button class="btn primary" type="submit">Finish</button></div>`,
+    async v => { await api('setup', v); location.reload(); }, false);
   modal(`<h2>Welcome to App Store</h2>
     <p>Connect it to Proxmox with an API token. Run this once in the Proxmox host shell (Datacenter → pve → Shell), then paste the result below.</p>
     <pre>pveum role add AppStore -privs "VM.Allocate,VM.Audit,VM.PowerMgmt,VM.Config.Disk,VM.Config.CPU,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Sys.Audit,Sys.AccessNetwork,SDN.Use"

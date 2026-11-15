@@ -547,8 +547,13 @@ async function updateInfo() {
 
 // ---------- setup / auth ----------
 const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 32).toString('hex');
+// install.sh leaves the Proxmox address and API token here, so the setup page only has to ask for a password.
+const PRESEED_FILE = path.join(DATA, 'preseed.json');
+const preseed = () => { const p = readJson(PRESEED_FILE, null); return p && p.host && p.tokenId && p.secret ? p : null; };
 async function setup(b) {
   if (config) throw new Error('Already configured');
+  const pre = preseed();
+  if (pre) b = { password: b.password, host: pre.host, tokenId: pre.tokenId, secret: pre.secret };
   if (!b.password || String(b.password).length < 8) throw new Error('Choose a password of at least 8 characters');
   const m = /^(?:https?:\/\/)?([^/:\s]+)(?::(\d+))?/.exec(String(b.host || '').trim());
   if (!m) throw new Error('Enter the Proxmox host address');
@@ -567,6 +572,7 @@ async function setup(b) {
   const salt = crypto.randomBytes(16).toString('hex');
   config = { pve: cfg, salt, passHash: hashPw(String(b.password), salt) };
   writeJson(CONFIG_FILE, config);
+  fs.rmSync(PRESEED_FILE, { force: true });
 }
 function newSession(res) {
   const t = crypto.randomBytes(32).toString('hex');
@@ -586,7 +592,7 @@ const readBody = (req, max = 1e5) => new Promise((resolve, reject) => {
 
 async function api(req, res, url) {
   const p = url.pathname, M = req.method;
-  if (p === '/api/state') return send(res, 200, { configured: !!config, authed: authed(req), dev: !!DEV });
+  if (p === '/api/state') return send(res, 200, { configured: !!config, authed: authed(req), dev: !!DEV, preseeded: !config && !!preseed() });
   if (p === '/api/setup' && M === 'POST') { await setup(await readBody(req)); newSession(res); return send(res, 200, { ok: true }); }
   if (p === '/api/login' && M === 'POST') {
     const b = await readBody(req); await sleep(400);

@@ -23,9 +23,83 @@ It has no dependencies beyond Node.js, and it talks to Proxmox with a limited AP
 
 ## Install
 
-The install takes about ten minutes. You create one small container, put the app in it, and connect it to Proxmox.
+The install takes about five minutes: one command on the Proxmox host, then a password in your browser.
 
-### 1. Create a container for the App Store
+### Step 1. Open the Proxmox host's shell
+
+In the Proxmox web UI, select your node in the tree on the left (it is usually called `pve`) and click **Shell**. You are now logged in to the host as `root`.
+
+Use the shell of the host itself, not the console of a container or VM.
+
+### Step 2. Run the installer
+
+Paste this line and press Enter:
+
+```sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/nikolajalbrechtsen/proxmox-appstore/main/install.sh)"
+```
+
+The installer first shows what it is about to do and asks two questions:
+
+1. **Continue?** Press Enter to go ahead.
+2. **Also set up the file browser?** Answer `y` if you want to browse and edit files inside your apps from the App Store. It gives the App Store access to the files in all your running containers; [File browser](#file-browser) explains exactly what that means. Press Enter to skip it. You can turn it on later.
+
+It then works for a few minutes. This is what it does:
+
+- downloads the Debian 13 container template, if the host does not have it yet
+- creates a small container named `appstore` (1 core, 512 MB memory, 4 GB disk) that gets its address from DHCP and starts when the host boots
+- installs Node.js and the App Store in that container
+- creates a Proxmox user, `appstore@pve`, with a role that can manage containers and VMs but cannot change users, permissions or host settings, and an API token for it
+- hands the token to the App Store, so you don't have to copy it
+
+When it finishes, it prints the App Store's address:
+
+```
+Done. Open the App Store in your browser and choose a password:
+
+    http://192.168.1.50
+```
+
+### Step 3. Choose a password
+
+Open that address in your browser. The page asks for one thing: a password of at least 8 characters. You sign in to the App Store with it from now on.
+
+Do this right away. Until a password is set, anyone on your network who opens the page can set one.
+
+After you click **Finish** you should see your containers and VMs under **My apps**.
+
+### Step 4. Try it
+
+Go to **Store**, install **Whoami** (a tiny test app) and click **Open** when it finishes. Then stop and delete it from **My apps**.
+
+### Step 5. Keep the address from changing
+
+The App Store's address comes from DHCP and can change. Reserve it in your router, or give the container a static IP address in Proxmox (container → **Network**).
+
+### Installer options
+
+To change what the installer uses, put settings in front of the command:
+
+```sh
+CTID=150 STORAGE=local-zfs bash -c "$(curl -fsSL https://raw.githubusercontent.com/nikolajalbrechtsen/proxmox-appstore/main/install.sh)"
+```
+
+| Setting | Meaning | Default |
+| --- | --- | --- |
+| `CTID` | ID of the new container | the next free ID |
+| `STORAGE` | Storage for the container's disk | `local-lvm`, or the first storage that can hold containers |
+| `BRIDGE` | Network bridge | `vmbr0` |
+| `CT_NAME` | Name of the container | `appstore` |
+| `REPO_URL` | Repository to install from, for example your own fork | this repository |
+
+If the installer stops with an error, it tells you how to remove the half-finished container. Fix the cause and run it again.
+
+### Install by hand
+
+<details>
+<summary>The same install without the script, step by step</summary>
+
+#### 1. Create a container for the App Store
 
 In the Proxmox web UI:
 
@@ -40,12 +114,12 @@ In the Proxmox web UI:
 3. Tick **Start after created** and finish.
 4. Select the new container → **Options** → set **Start at boot** to Yes.
 
-### 2. Install the app in the container
+#### 2. Install the app in the container
 
 Open the container's **Console**, log in as `root`, and paste:
 
 ```sh
-apt update && apt install -y nodejs git
+apt update && apt install -y nodejs git openssh-client
 git clone https://github.com/nikolajalbrechtsen/proxmox-appstore.git /opt/appstore
 useradd -r -s /usr/sbin/nologin appstore
 mkdir -p /var/lib/appstore && chown appstore: /var/lib/appstore && chmod 700 /var/lib/appstore
@@ -56,7 +130,7 @@ hostname -I
 
 The last command prints the container's IP address. You need it in step 4.
 
-### 3. Create an API token on the Proxmox host
+#### 3. Create an API token on the Proxmox host
 
 Open the **host's** shell (select your node in the left tree → **Shell**) and paste:
 
@@ -69,9 +143,7 @@ pveum user token add appstore@pve web --privsep 0
 
 The last command prints a table. Copy the long code in the **value** row. It is shown only once.
 
-This creates a separate `appstore@pve` user that can manage containers and VMs but cannot change users, permissions or host settings.
-
-### 4. Connect the app to Proxmox
+#### 4. Connect the app to Proxmox
 
 Open `http://<container IP>` in your browser. On the setup page, enter:
 
@@ -80,13 +152,15 @@ Open `http://<container IP>` in your browser. On the setup page, enter:
 - **Token secret** – the value you copied in step 3
 - **Password** – choose one, at least 8 characters. You sign in to the App Store with it.
 
-Click **Connect**. You should see your containers and VMs under **My apps**.
+Click **Connect**. Do this right after step 2: until setup is finished, anyone on your network who opens the page can complete it.
 
-Do this right after step 2: until setup is finished, anyone on your network who opens the page can complete it.
+An install by hand does not include the **Update** button's one-click install or the file browser. [Updating](#updating) and [File browser](#file-browser) show how to add them.
 
-### 5. Try it
+</details>
 
-Go to **Store**, install **Whoami** (a tiny test app) and click **Open** when it finishes. Then stop and delete it from **My apps**.
+### Remove the App Store
+
+On the host: `pct stop <ID> && pct destroy <ID>` removes the container, and `pveum user delete appstore@pve` removes the user and its token. Apps you installed stay; delete them from **My apps** first if you don't want them. If you set up the file browser, also see **Remove it** under [File browser](#file-browser).
 
 ## Installing apps
 
@@ -111,7 +185,7 @@ Click an app card in the **Store** to see what it is, with screenshots where the
 
 The Proxmox API token cannot read files inside a container, so the **Files** tab goes through the Proxmox host over SSH. This is the one part of the App Store that needs more than the API token, and it is optional: without the setup, everything else works as before.
 
-**Setup.** Open **Manage** on any app and go to **Files**. The page shows a command. Paste it in the **host's** shell (select your node → **Shell**) and click **I have run it – check**. The command does two things on the host:
+**Setup.** If you answered `y` to the installer's file browser question, this is already done. Otherwise: open **Manage** on any app and go to **Files**. The page shows a command. Paste it in the **host's** shell (select your node → **Shell**) and click **I have run it – check**. The command does two things on the host:
 
 - it saves the helper script [`host/appstore-files`](host/appstore-files) as `/usr/local/bin/appstore-files`
 - it adds the App Store's SSH key to root's `authorized_keys`, locked to that one script (`command="…",restrict`). The key cannot open a shell or run anything else.
@@ -143,7 +217,7 @@ Update manually, in the App Store container's console:
 cd /opt/appstore && git pull && systemctl restart appstore
 ```
 
-Or let the **Update** button install the update. Run this once in the container's console:
+Or let the **Update** button install the update. The installer sets this up for you. After an install by hand, run this once in the container's console:
 
 ```sh
 cp /opt/appstore/autoupdate/appstore-update /usr/local/bin/ && chmod +x /usr/local/bin/appstore-update
